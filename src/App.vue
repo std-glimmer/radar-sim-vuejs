@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia';
-import { onBeforeUnmount, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import RadarParamsControls from './components/controls/RadarParamsControls.vue';
 import TargetForm from './components/controls/TargetForm.vue';
 import SimulationLayout from './components/layout/SimulationLayout.vue';
@@ -8,7 +8,7 @@ import RadarScopePanel from './components/panels/RadarScopePanel.vue';
 import Scene3DPanel from './components/panels/Scene3DPanel.vue';
 import SideProjectionPanel from './components/panels/SideProjectionPanel.vue';
 import { SimulationRuntime } from './core/simulationRuntime';
-import type { NewTargetInput, RadarParams } from './core/types';
+import type { NewTargetInput, RadarCursorState, RadarParams } from './core/types';
 import { useRadarStore } from './stores/radarStore';
 import { useSimStore } from './stores/simStore';
 import { useTargetsStore } from './stores/targetsStore';
@@ -20,6 +20,17 @@ const targetsStore = useTargetsStore();
 const { params, detections, sweepAngleRad, sweepElevationRad, simTimeSec } = storeToRefs(radarStore);
 const { targets, count } = storeToRefs(targetsStore);
 const { isRunning } = storeToRefs(simStore);
+const cursorRangeMeters = ref(params.value.maxRangeMeters * 0.5);
+const cursorAzimuthOffsetRad = ref(0);
+
+const cursor = computed<RadarCursorState>(() => {
+  const clampedOffset = clampCursorAzimuthOffset(cursorAzimuthOffsetRad.value, params.value.azimuthScanSpanDeg);
+  const clampedRange = clampNumber(cursorRangeMeters.value, 0, params.value.maxRangeMeters);
+  return {
+    rangeMeters: clampedRange,
+    azimuthRad: normalizeAngleRad(getScanCenterAzimuthRad(params.value) + clampedOffset),
+  };
+});
 
 const runtime = new SimulationRuntime({
   getParams: () => params.value,
@@ -69,6 +80,93 @@ function updateRadarParams(nextParams: Partial<RadarParams>): void {
   radarStore.updateParams(nextParams);
 }
 
+function updateCursorFromAbsolute(nextCursor: RadarCursorState | null): void {
+  if (!nextCursor) {
+    return;
+  }
+
+  const center = getScanCenterAzimuthRad(params.value);
+  const offset = shortestAngleDiffRad(nextCursor.azimuthRad, center);
+  cursorAzimuthOffsetRad.value = clampCursorAzimuthOffset(offset, params.value.azimuthScanSpanDeg);
+  cursorRangeMeters.value = clampNumber(nextCursor.rangeMeters, 0, params.value.maxRangeMeters);
+}
+
+function handleCursorKeydown(event: KeyboardEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target) {
+    const tag = target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+      return;
+    }
+  }
+
+  const key = event.key;
+  if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft' && key !== 'ArrowRight') {
+    return;
+  }
+
+  event.preventDefault();
+
+  const rangeStep = Math.max(250, params.value.maxRangeMeters * 0.01);
+  const azimuthStepRad = (1 * Math.PI) / 180;
+
+  if (key === 'ArrowUp') {
+    cursorRangeMeters.value = clampNumber(cursorRangeMeters.value + rangeStep, 0, params.value.maxRangeMeters);
+    return;
+  }
+
+  if (key === 'ArrowDown') {
+    cursorRangeMeters.value = clampNumber(cursorRangeMeters.value - rangeStep, 0, params.value.maxRangeMeters);
+    return;
+  }
+
+  if (key === 'ArrowLeft') {
+    cursorAzimuthOffsetRad.value = clampCursorAzimuthOffset(
+      cursorAzimuthOffsetRad.value - azimuthStepRad,
+      params.value.azimuthScanSpanDeg,
+    );
+    return;
+  }
+
+  cursorAzimuthOffsetRad.value = clampCursorAzimuthOffset(
+    cursorAzimuthOffsetRad.value + azimuthStepRad,
+    params.value.azimuthScanSpanDeg,
+  );
+}
+
+function normalizeAngleRad(angleRad: number): number {
+  const tau = Math.PI * 2;
+  let next = angleRad % tau;
+  if (next <= -Math.PI) {
+    next += tau;
+  } else if (next > Math.PI) {
+    next -= tau;
+  }
+  return next;
+}
+
+function shortestAngleDiffRad(to: number, from: number): number {
+  return normalizeAngleRad(to - from);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getScanCenterAzimuthRad(radarParams: RadarParams): number {
+  return normalizeAngleRad(((radarParams.radarAzimuthDeg + radarParams.zoneAzimuthOffsetDeg) * Math.PI) / 180);
+}
+
+function clampCursorAzimuthOffset(offsetRad: number, scanSpanDeg: number): number {
+  const normalizedOffset = normalizeAngleRad(offsetRad);
+  if (scanSpanDeg >= 360) {
+    return normalizedOffset;
+  }
+
+  const halfSpanRad = (Math.max(10, Math.min(360, scanSpanDeg)) * Math.PI) / 360;
+  return clampNumber(normalizedOffset, -halfSpanRad, halfSpanRad);
+}
+
 onMounted(() => {
   addTarget({
     position: { x: -28000, y: 3200, z: 76000 },
@@ -84,9 +182,23 @@ onMounted(() => {
   });
 
   runtime.start();
+  window.addEventListener('keydown', handleCursorKeydown);
 });
 
+watch(
+  () => params.value,
+  () => {
+    cursorRangeMeters.value = clampNumber(cursorRangeMeters.value, 0, params.value.maxRangeMeters);
+    cursorAzimuthOffsetRad.value = clampCursorAzimuthOffset(
+      cursorAzimuthOffsetRad.value,
+      params.value.azimuthScanSpanDeg,
+    );
+  },
+  { deep: true },
+);
+
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleCursorKeydown);
   runtime.stop();
 });
 </script>
@@ -123,6 +235,7 @@ onBeforeUnmount(() => {
             :sweep-angle-rad="sweepAngleRad"
             :sweep-elevation-rad="sweepElevationRad"
             :params="params"
+            :cursor="cursor"
             @add-from-scene="addTargetFromScene"
           />
         </template>
@@ -136,11 +249,18 @@ onBeforeUnmount(() => {
             :detections="detections"
             :params="params"
             :sweep-elevation-rad="sweepElevationRad"
+            :cursor="cursor"
           />
         </template>
 
         <template #radar>
-          <RadarScopePanel :detections="detections" :params="params" :sweep-angle-rad="sweepAngleRad" />
+          <RadarScopePanel
+            :detections="detections"
+            :params="params"
+            :sweep-angle-rad="sweepAngleRad"
+            :cursor="cursor"
+            @update-cursor="updateCursorFromAbsolute"
+          />
         </template>
       </SimulationLayout>
     </main>

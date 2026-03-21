@@ -17,6 +17,8 @@ export interface RadarParams {
   azimuthScanSpanDeg: number;
   antennaTiltDeg: number;
   zoneAzimuthOffsetDeg: number;
+  cursorWidthMeters: number;
+  cursorLengthMeters: number;
 }
 
 export interface Target {
@@ -33,6 +35,11 @@ export interface Detection {
   bearingRad: number;
   elevationRad: number;
   strength: number;
+}
+
+export interface RadarCursorState {
+  rangeMeters: number;
+  azimuthRad: number;
 }
 
 export interface SimulationFrame {

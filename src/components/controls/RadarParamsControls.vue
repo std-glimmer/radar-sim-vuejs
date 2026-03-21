@@ -392,6 +392,52 @@ const effectiveBeamElevationDeg = computed(() => {
           />
         </div>
       </div>
+
+      <div class="param-item">
+        <label for="cursor-width">Cursor width (m)</label>
+        <div class="control-row">
+          <input
+            id="cursor-width"
+            type="range"
+            min="500"
+            max="20000"
+            step="100"
+            :value="props.params.cursorWidthMeters"
+            @input="emitNumericUpdate('cursorWidthMeters', ($event.target as HTMLInputElement).value)"
+          />
+          <input
+            type="number"
+            min="500"
+            max="20000"
+            step="1"
+            :value="props.params.cursorWidthMeters"
+            @change="emitNumericUpdate('cursorWidthMeters', ($event.target as HTMLInputElement).value)"
+          />
+        </div>
+      </div>
+
+      <div class="param-item">
+        <label for="cursor-length">Cursor length (m)</label>
+        <div class="control-row">
+          <input
+            id="cursor-length"
+            type="range"
+            min="500"
+            max="20000"
+            step="100"
+            :value="props.params.cursorLengthMeters"
+            @input="emitNumericUpdate('cursorLengthMeters', ($event.target as HTMLInputElement).value)"
+          />
+          <input
+            type="number"
+            min="500"
+            max="20000"
+            step="1"
+            :value="props.params.cursorLengthMeters"
+            @change="emitNumericUpdate('cursorLengthMeters', ($event.target as HTMLInputElement).value)"
+          />
+        </div>
+      </div>
     </div>
   </section>
 </template>

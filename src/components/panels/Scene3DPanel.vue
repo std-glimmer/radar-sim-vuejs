@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import type { RadarParams, Target } from '../../core/types';
+import type { RadarCursorState, RadarParams, Target } from '../../core/types';
 import { ThreeSceneRenderer } from '../../renderers/three/ThreeSceneRenderer';
 
 const props = defineProps<{
@@ -8,6 +8,7 @@ const props = defineProps<{
   sweepAngleRad: number;
   sweepElevationRad: number;
   params: RadarParams;
+  cursor: RadarCursorState | null;
 }>();
 
 const emit = defineEmits<{
@@ -44,6 +45,7 @@ onMounted(() => {
   renderer.syncTargets(props.targets);
   renderer.setDisplaySettings(displaySettings);
   renderer.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
+  renderer.updateCursor(props.cursor, props.params);
 
   window.addEventListener('resize', onResize);
 
@@ -63,7 +65,16 @@ watch(
 
 watch(
   () => [props.sweepAngleRad, props.sweepElevationRad, props.params],
-  () => renderer?.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params),
+  () => {
+    renderer?.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
+    renderer?.updateCursor(props.cursor, props.params);
+  },
+  { deep: true },
+);
+
+watch(
+  () => [props.cursor, props.params],
+  () => renderer?.updateCursor(props.cursor, props.params),
   { deep: true },
 );
 

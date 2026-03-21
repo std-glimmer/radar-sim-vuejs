@@ -1,4 +1,4 @@
-import type { Detection, RadarParams } from '../../core/types';
+import type { Detection, RadarCursorState, RadarParams } from '../../core/types';
 
 export class RadarCanvasRenderer {
   private readonly canvas: HTMLCanvasElement;
@@ -24,7 +24,12 @@ export class RadarCanvasRenderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  render(sweepAngleRad: number, detections: Detection[], params: RadarParams): void {
+  render(
+    sweepAngleRad: number,
+    detections: Detection[],
+    params: RadarParams,
+    cursor: RadarCursorState | null,
+  ): void {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
     const cx = width * 0.5;
@@ -36,6 +41,35 @@ export class RadarCanvasRenderer {
     this.drawScanConeSector(cx, cy, radius, sweepAngleRad, params.fovDeg);
     this.drawSweep(cx, cy, radius, sweepAngleRad);
     this.drawDetections(cx, cy, radius, detections, params.maxRangeMeters);
+    this.drawCursor(cx, cy, radius, params, cursor);
+  }
+
+  toCursorStateFromCanvasPoint(
+    canvasX: number,
+    canvasY: number,
+    maxRangeMeters: number,
+  ): RadarCursorState | null {
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+    const radius = Math.min(width, height) * 0.45;
+
+    const dx = canvasX - cx;
+    const dy = canvasY - cy;
+    const pixelDistance = Math.sqrt(dx * dx + dy * dy);
+
+    if (pixelDistance > radius) {
+      return null;
+    }
+
+    const rangeMeters = (pixelDistance / Math.max(1, radius)) * Math.max(1, maxRangeMeters);
+    const azimuthRad = Math.atan2(dx, -dy);
+
+    return {
+      rangeMeters,
+      azimuthRad,
+    };
   }
 
   private fadeBackground(width: number, height: number): void {
@@ -133,6 +167,33 @@ export class RadarCanvasRenderer {
       this.ctx.fill();
     }
 
+    this.ctx.restore();
+  }
+
+  private drawCursor(
+    cx: number,
+    cy: number,
+    radius: number,
+    params: RadarParams,
+    cursor: RadarCursorState | null,
+  ): void {
+    if (!cursor) {
+      return;
+    }
+
+    const normalizedRange = Math.max(0, Math.min(1, cursor.rangeMeters / Math.max(1, params.maxRangeMeters)));
+    const px = cx + Math.sin(cursor.azimuthRad) * radius * normalizedRange;
+    const py = cy - Math.cos(cursor.azimuthRad) * radius * normalizedRange;
+    const pixelPerMeter = radius / Math.max(1, params.maxRangeMeters);
+    const widthPx = Math.max(6, params.cursorWidthMeters * pixelPerMeter);
+    const lengthPx = Math.max(6, params.cursorLengthMeters * pixelPerMeter);
+
+    this.ctx.save();
+    this.ctx.translate(px, py);
+    this.ctx.rotate(cursor.azimuthRad);
+    this.ctx.strokeStyle = 'rgba(151, 255, 186, 1)';
+    this.ctx.lineWidth = 1.5;
+    this.ctx.strokeRect(-widthPx * 0.5, -lengthPx * 0.5, widthPx, lengthPx);
     this.ctx.restore();
   }
 }

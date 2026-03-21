@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { RadarParams, Target } from '../../core/types';
+import type { RadarCursorState, RadarParams, Target } from '../../core/types';
 
 interface ThreeSceneRendererOptions {
   onAddTargetFromGroundPoint?: (x: number, z: number) => void;
@@ -29,6 +29,7 @@ export class ThreeSceneRenderer {
   private activeScanMesh: THREE.Mesh | null = null;
   private readonly activeBoundaryMeshes: THREE.Mesh[] = [];
   private readonly activeBoundaryLines: THREE.LineSegments[] = [];
+  private cursorMesh: THREE.LineLoop | null = null;
   private displaySettings: ThreeDisplaySettings = {
     showFullRegion: true,
     showFullRegionVerticalFaces: true,
@@ -51,7 +52,7 @@ export class ThreeSceneRenderer {
 
   private readonly host: HTMLElement;
   private readonly onAddTargetFromGroundPoint?: (x: number, z: number) => void;
-  private readonly defaultCameraPosition = new THREE.Vector3(130000, 90000, 0);
+  private readonly defaultCameraPosition = new THREE.Vector3(-130000, 90000, 0);
   private readonly defaultControlsTarget = new THREE.Vector3(0, 0, 0);
 
   constructor(host: HTMLElement, options: ThreeSceneRendererOptions = {}) {
@@ -198,6 +199,64 @@ export class ThreeSceneRenderer {
     }
   }
 
+  updateCursor(cursor: RadarCursorState | null, params: RadarParams): void {
+    if (!cursor) {
+      if (this.cursorMesh) {
+        this.cursorMesh.visible = false;
+      }
+      return;
+    }
+
+    if (!this.cursorMesh) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          [
+            -0.5,
+            -0.5,
+            0,
+            0.5,
+            -0.5,
+            0,
+            0.5,
+            0.5,
+            0,
+            -0.5,
+            0.5,
+            0,
+          ],
+          3,
+        ),
+      );
+      const material = new THREE.LineBasicMaterial({
+        color: '#40ff7a',
+      });
+      this.cursorMesh = new THREE.LineLoop(geometry, material);
+      this.cursorMesh.rotation.x = -Math.PI / 2;
+      this.cursorMesh.position.y = 180;
+      this.scene.add(this.cursorMesh);
+    }
+
+    const clampedRange = Math.max(0, Math.min(params.maxRangeMeters, cursor.rangeMeters));
+    const centerElevationRad = (params.antennaTiltDeg * Math.PI) / 180;
+    const planarRange = Math.cos(centerElevationRad) * clampedRange;
+    const x = Math.sin(cursor.azimuthRad) * planarRange;
+    const z = Math.cos(cursor.azimuthRad) * planarRange;
+    const y = Math.sin(centerElevationRad) * clampedRange;
+
+    this.cursorMesh.visible = true;
+    this.cursorMesh.position.x = x;
+    this.cursorMesh.position.y = y;
+    this.cursorMesh.position.z = z;
+    this.cursorMesh.rotation.set(-Math.PI / 2, 0, 0);
+    this.cursorMesh.scale.set(
+      Math.max(1, params.cursorWidthMeters),
+      Math.max(1, params.cursorLengthMeters),
+      1,
+    );
+  }
+
   resize(): void {
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
@@ -212,6 +271,7 @@ export class ThreeSceneRenderer {
     this.controls.dispose();
 
     this.disposeScanMeshes();
+    this.disposeCursorMesh();
 
     this.renderer.dispose();
     this.host.removeChild(this.renderer.domElement);
@@ -353,6 +413,17 @@ export class ThreeSceneRenderer {
       (line.material as THREE.Material).dispose();
     }
     this.activeBoundaryLines.length = 0;
+  }
+
+  private disposeCursorMesh(): void {
+    if (!this.cursorMesh) {
+      return;
+    }
+
+    this.scene.remove(this.cursorMesh);
+    this.cursorMesh.geometry.dispose();
+    (this.cursorMesh.material as THREE.Material).dispose();
+    this.cursorMesh = null;
   }
 
   private buildActiveBoundaryFaces(

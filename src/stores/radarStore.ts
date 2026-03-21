@@ -16,6 +16,8 @@ const defaultRadarParams: RadarParams = {
   azimuthScanSpanDeg: 360,
   antennaTiltDeg: 0,
   zoneAzimuthOffsetDeg: 0,
+  cursorWidthMeters: 13500,
+  cursorLengthMeters: 9000,
 };
 
 export const useRadarStore = defineStore('radar', () => {
@@ -44,6 +46,8 @@ export const useRadarStore = defineStore('radar', () => {
       azimuthScanSpanDeg: clamp(merged.azimuthScanSpanDeg, 10, 360),
       antennaTiltDeg: clamp(merged.antennaTiltDeg, -60, 60),
       zoneAzimuthOffsetDeg: clamp(merged.zoneAzimuthOffsetDeg, -180, 180),
+      cursorWidthMeters: clamp(merged.cursorWidthMeters, 500, 20000),
+      cursorLengthMeters: clamp(merged.cursorLengthMeters, 500, 20000),
     };
   }
 

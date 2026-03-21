@@ -1,4 +1,4 @@
-import type { Detection, RadarParams } from '../../core/types';
+import type { Detection, RadarCursorState, RadarParams } from '../../core/types';
 
 export class SideViewRenderer {
   private readonly canvas: HTMLCanvasElement;
@@ -24,7 +24,12 @@ export class SideViewRenderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  render(detections: Detection[], params: RadarParams, sweepElevationRad: number): void {
+  render(
+    detections: Detection[],
+    params: RadarParams,
+    sweepElevationRad: number,
+    cursor: RadarCursorState | null,
+  ): void {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
     const pad = 28;
@@ -34,12 +39,13 @@ export class SideViewRenderer {
 
     this.ctx.clearRect(0, 0, width, height);
     this.drawBackground(width, height);
-    this.drawAxes(pad, width, height, params.maxRangeMeters, scale);
+    this.drawAxes(pad, width, height, params.maxRangeMeters, scale, cursor, params.antennaTiltDeg);
 
     this.ctx.save();
     this.ctx.translate(pad, pad);
 
     this.drawScanCone(plotW, plotH, params, sweepElevationRad, scale);
+    this.drawCursorRangeLine(plotW, plotH, params.maxRangeMeters, cursor);
 
     for (const detection of detections) {
       const x = (detection.groundDistanceMeters / params.maxRangeMeters) * plotW;
@@ -52,6 +58,29 @@ export class SideViewRenderer {
       this.ctx.fill();
     }
 
+    this.ctx.restore();
+  }
+
+  private drawCursorRangeLine(
+    plotW: number,
+    plotH: number,
+    maxRangeMeters: number,
+    cursor: RadarCursorState | null,
+  ): void {
+    if (!cursor) {
+      return;
+    }
+
+    const x = (cursor.rangeMeters / Math.max(1, maxRangeMeters)) * plotW;
+    const clampedX = Math.max(0, Math.min(plotW, x));
+
+    this.ctx.save();
+    this.ctx.strokeStyle = 'rgba(64, 255, 122, 0.9)';
+    this.ctx.lineWidth = 1.5;
+    this.ctx.beginPath();
+    this.ctx.moveTo(clampedX, 0);
+    this.ctx.lineTo(clampedX, plotH);
+    this.ctx.stroke();
     this.ctx.restore();
   }
 
@@ -179,6 +208,8 @@ export class SideViewRenderer {
     height: number,
     maxRangeMeters: number,
     altitudeScale: { min: number; max: number },
+    cursor: RadarCursorState | null,
+    antennaTiltDeg: number,
   ): void {
     this.ctx.strokeStyle = 'rgba(183, 213, 241, 0.6)';
     this.ctx.lineWidth = 1.2;
@@ -232,5 +263,11 @@ export class SideViewRenderer {
       this.ctx.font = '10px sans-serif';
       this.ctx.fillText(`${altitudeKm} km`, pad + 8, y + 3);
     }
+
+    const cursorRangeText = cursor ? `${(cursor.rangeMeters / 1000).toFixed(1)} km` : '--';
+    const tiltText = `${antennaTiltDeg.toFixed(1)} deg`;
+    this.ctx.fillStyle = 'rgba(64, 255, 122, 0.92)';
+    this.ctx.font = '11px sans-serif';
+    this.ctx.fillText(`cursor ${cursorRangeText} / tilt ${tiltText}`, pad + 8, height - pad - 10);
   }
 }
