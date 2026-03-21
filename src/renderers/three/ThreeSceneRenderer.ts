@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Target } from '../../core/types';
+import type { RadarParams, Target } from '../../core/types';
 
 interface ThreeSceneRendererOptions {
   onAddTargetFromGroundPoint?: (x: number, z: number) => void;
@@ -14,6 +14,13 @@ export class ThreeSceneRenderer {
   private readonly raycaster = new THREE.Raycaster();
   private readonly mouse = new THREE.Vector2();
   private readonly targetMeshes = new Map<string, THREE.Mesh>();
+  private scanRegionMesh: THREE.Mesh | null = null;
+  private activeScanMesh: THREE.Mesh | null = null;
+  private scanRegionParams: {
+    maxRangeMeters: number;
+    azimuthFovDeg: number;
+    elevationFovDeg: number;
+  } | null = null;
   private readonly groundPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(400000, 400000),
     new THREE.MeshBasicMaterial({ visible: false }),
@@ -75,6 +82,34 @@ export class ThreeSceneRenderer {
     this.renderer.render(this.scene, this.camera);
   }
 
+  updateScanCone(sweepAngleRad: number, params: RadarParams): void {
+    const rangeMeters = Math.max(5000, params.maxRangeMeters);
+    const azimuthFovDeg = Math.max(1, params.fovDeg);
+    const elevationFovDeg = Math.max(5, params.elevationFovDeg);
+
+    if (
+      !this.scanRegionMesh ||
+      !this.activeScanMesh ||
+      !this.scanRegionParams ||
+      this.scanRegionParams.maxRangeMeters !== rangeMeters ||
+      this.scanRegionParams.azimuthFovDeg !== azimuthFovDeg ||
+      this.scanRegionParams.elevationFovDeg !== elevationFovDeg
+    ) {
+      this.rebuildScanRegionGeometry(rangeMeters, azimuthFovDeg, elevationFovDeg);
+      this.scanRegionParams = {
+        maxRangeMeters: rangeMeters,
+        azimuthFovDeg,
+        elevationFovDeg,
+      };
+    }
+
+    if (!this.activeScanMesh) {
+      return;
+    }
+
+    this.activeScanMesh.rotation.set(0, sweepAngleRad, 0);
+  }
+
   resize(): void {
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
@@ -87,6 +122,9 @@ export class ThreeSceneRenderer {
   dispose(): void {
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
     this.controls.dispose();
+
+    this.disposeScanMeshes();
+
     this.renderer.dispose();
     this.host.removeChild(this.renderer.domElement);
   }
@@ -112,6 +150,80 @@ export class ThreeSceneRenderer {
     this.scene.add(axes);
     this.scene.add(origin);
     this.scene.add(this.groundPlane);
+  }
+
+  private rebuildScanRegionGeometry(
+    maxRangeMeters: number,
+    azimuthFovDeg: number,
+    elevationFovDeg: number,
+  ): void {
+    this.disposeScanMeshes();
+
+    const halfElevationRad = (elevationFovDeg * Math.PI) / 360;
+    const thetaStart = Math.max(0.001, Math.PI / 2 - halfElevationRad);
+    const thetaLength = Math.min(Math.PI - 0.002, halfElevationRad * 2);
+
+    const fullRegionGeometry = new THREE.SphereGeometry(
+      maxRangeMeters,
+      64,
+      24,
+      0,
+      Math.PI * 2,
+      thetaStart,
+      thetaLength,
+    );
+
+    const fullRegionMaterial = new THREE.MeshBasicMaterial({
+      color: '#54d8ff',
+      transparent: true,
+      opacity: 0.06,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    this.scanRegionMesh = new THREE.Mesh(fullRegionGeometry, fullRegionMaterial);
+    this.scene.add(this.scanRegionMesh);
+
+    const halfAzimuthRad = (azimuthFovDeg * Math.PI) / 360;
+    const activePhiStart = Math.PI / 2 - halfAzimuthRad;
+    const activePhiLength = halfAzimuthRad * 2;
+
+    const activeGeometry = new THREE.SphereGeometry(
+      maxRangeMeters * 1.002,
+      48,
+      18,
+      activePhiStart,
+      activePhiLength,
+      thetaStart,
+      thetaLength,
+    );
+
+    const activeMaterial = new THREE.MeshBasicMaterial({
+      color: '#5bffb3',
+      transparent: true,
+      opacity: 0.18,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    this.activeScanMesh = new THREE.Mesh(activeGeometry, activeMaterial);
+    this.scene.add(this.activeScanMesh);
+  }
+
+  private disposeScanMeshes(): void {
+    if (this.scanRegionMesh) {
+      this.scene.remove(this.scanRegionMesh);
+      this.scanRegionMesh.geometry.dispose();
+      (this.scanRegionMesh.material as THREE.Material).dispose();
+      this.scanRegionMesh = null;
+    }
+
+    if (this.activeScanMesh) {
+      this.scene.remove(this.activeScanMesh);
+      this.activeScanMesh.geometry.dispose();
+      (this.activeScanMesh.material as THREE.Material).dispose();
+      this.activeScanMesh = null;
+    }
   }
 
   private handlePointerDown = (event: PointerEvent): void => {
