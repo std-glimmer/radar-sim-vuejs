@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { ref } from 'vue';
-import type { RadarParams } from '../../core/types';
+import type { RadarParams, RadarScopeMode } from '../../core/types';
 
 const props = defineProps<{
   params: RadarParams;
+  scopeMode: RadarScopeMode;
 }>();
 
 const emit = defineEmits<{
   update: [payload: Partial<RadarParams>];
+  updateScopeMode: [payload: RadarScopeMode];
 }>();
 
 type RadarProfileId = 'mig29-9-12' | 'circular-surveillance';
@@ -93,6 +95,24 @@ const effectiveBeamElevationDeg = computed(() => {
 
 <template>
   <section class="radar-params">
+    <div class="param-group">
+      <h3>Radar Scope</h3>
+
+      <div class="param-item">
+        <label for="scope-mode">Display mode</label>
+        <div class="control-row profile-row">
+          <select
+            id="scope-mode"
+            :value="props.scopeMode"
+            @change="emit('updateScopeMode', ($event.target as HTMLSelectElement).value as RadarScopeMode)"
+          >
+            <option value="ppi">PPI (radial)</option>
+            <option value="b-scope">B-Scope (rectangular)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <div class="param-group">
       <h3>Profiles</h3>
 

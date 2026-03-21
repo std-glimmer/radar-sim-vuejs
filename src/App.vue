@@ -8,7 +8,7 @@ import RadarScopePanel from './components/panels/RadarScopePanel.vue';
 import Scene3DPanel from './components/panels/Scene3DPanel.vue';
 import SideProjectionPanel from './components/panels/SideProjectionPanel.vue';
 import { SimulationRuntime } from './core/simulationRuntime';
-import type { NewTargetInput, RadarCursorState, RadarParams } from './core/types';
+import type { NewTargetInput, RadarCursorState, RadarParams, RadarScopeMode } from './core/types';
 import { useRadarStore } from './stores/radarStore';
 import { useSimStore } from './stores/simStore';
 import { useTargetsStore } from './stores/targetsStore';
@@ -22,6 +22,8 @@ const { targets, count } = storeToRefs(targetsStore);
 const { isRunning } = storeToRefs(simStore);
 const cursorRangeMeters = ref(params.value.maxRangeMeters * 0.5);
 const cursorAzimuthOffsetRad = ref(0);
+const showRadarBeam = ref(true);
+const scopeMode = ref<RadarScopeMode>('ppi');
 
 const cursor = computed<RadarCursorState>(() => {
   const clampedOffset = clampCursorAzimuthOffset(cursorAzimuthOffsetRad.value, params.value.azimuthScanSpanDeg);
@@ -89,6 +91,14 @@ function updateCursorFromAbsolute(nextCursor: RadarCursorState | null): void {
   const offset = shortestAngleDiffRad(nextCursor.azimuthRad, center);
   cursorAzimuthOffsetRad.value = clampCursorAzimuthOffset(offset, params.value.azimuthScanSpanDeg);
   cursorRangeMeters.value = clampNumber(nextCursor.rangeMeters, 0, params.value.maxRangeMeters);
+}
+
+function updateRadarBeamVisibility(nextVisible: boolean): void {
+  showRadarBeam.value = nextVisible;
+}
+
+function updateScopeMode(nextMode: RadarScopeMode): void {
+  scopeMode.value = nextMode;
 }
 
 function handleCursorKeydown(event: KeyboardEvent): void {
@@ -241,7 +251,12 @@ onBeforeUnmount(() => {
         </template>
 
         <template #controls>
-          <RadarParamsControls :params="params" @update="updateRadarParams" />
+          <RadarParamsControls
+            :params="params"
+            :scope-mode="scopeMode"
+            @update="updateRadarParams"
+            @update-scope-mode="updateScopeMode"
+          />
         </template>
 
         <template #side>
@@ -258,8 +273,12 @@ onBeforeUnmount(() => {
             :detections="detections"
             :params="params"
             :sweep-angle-rad="sweepAngleRad"
+            :sweep-elevation-rad="sweepElevationRad"
             :cursor="cursor"
+            :show-beam="showRadarBeam"
+            :scope-mode="scopeMode"
             @update-cursor="updateCursorFromAbsolute"
+            @update-beam-visibility="updateRadarBeamVisibility"
           />
         </template>
       </SimulationLayout>

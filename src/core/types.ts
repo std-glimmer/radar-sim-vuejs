@@ -42,6 +42,8 @@ export interface RadarCursorState {
   azimuthRad: number;
 }
 
+export type RadarScopeMode = 'ppi' | 'b-scope';
+
 export interface SimulationFrame {
   simTimeSec: number;
   sweepAngleRad: number;
