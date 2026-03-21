@@ -106,7 +106,6 @@ onBeforeUnmount(() => {
     </header>
 
     <TargetForm @submit="addTarget" />
-  <RadarParamsControls :params="params" @update="updateRadarParams" />
 
     <section class="targets-panel">
       <div v-for="target in targets" :key="target.id" class="target-item">
@@ -118,7 +117,12 @@ onBeforeUnmount(() => {
     <main class="sim-stage">
       <SimulationLayout>
         <template #left>
-          <Scene3DPanel :targets="targets" @add-from-scene="addTargetFromScene" />
+          <Scene3DPanel
+            :targets="targets"
+            :sweep-angle-rad="sweepAngleRad"
+            :params="params"
+            @add-from-scene="addTargetFromScene"
+          />
         </template>
 
         <template #right-top>
@@ -126,7 +130,10 @@ onBeforeUnmount(() => {
         </template>
 
         <template #right-bottom>
-          <RadarScopePanel :detections="detections" :params="params" :sweep-angle-rad="sweepAngleRad" />
+          <div class="radar-widget">
+            <RadarParamsControls :params="params" @update="updateRadarParams" />
+            <RadarScopePanel :detections="detections" :params="params" :sweep-angle-rad="sweepAngleRad" />
+          </div>
         </template>
       </SimulationLayout>
     </main>
@@ -195,6 +202,22 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.radar-widget {
+  height: 100%;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+}
+
+.radar-widget > :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.radar-widget :deep(.scope-canvas) {
+  border-radius: 8px;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-rows: auto auto auto auto;
@@ -205,6 +228,10 @@ onBeforeUnmount(() => {
   .control-bar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .radar-widget {
+    flex-direction: column;
   }
 }
 </style>

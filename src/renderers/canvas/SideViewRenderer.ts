@@ -38,6 +38,8 @@ export class SideViewRenderer {
     this.ctx.save();
     this.ctx.translate(pad, pad);
 
+    this.drawScanCone(plotW, plotH, params);
+
     for (const detection of detections) {
       const x = (detection.groundDistanceMeters / params.maxRangeMeters) * plotW;
       const elevScale = Math.tan(detection.elevationRad);
@@ -51,6 +53,40 @@ export class SideViewRenderer {
     }
 
     this.ctx.restore();
+  }
+
+  private drawScanCone(plotW: number, plotH: number, params: RadarParams): void {
+    const halfElevRad = (params.elevationFovDeg * Math.PI) / 360;
+    const originX = 0;
+    const originY = plotH * 0.5;
+    const farX = plotW;
+
+    const yTop = this.elevationToCanvasY(halfElevRad, plotH);
+    const yBottom = this.elevationToCanvasY(-halfElevRad, plotH);
+
+    this.ctx.save();
+    this.ctx.fillStyle = 'rgba(128, 209, 255, 0.12)';
+    this.ctx.beginPath();
+    this.ctx.moveTo(originX, originY);
+    this.ctx.lineTo(farX, yTop);
+    this.ctx.lineTo(farX, yBottom);
+    this.ctx.closePath();
+    this.ctx.fill();
+
+    this.ctx.strokeStyle = 'rgba(166, 225, 255, 0.55)';
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.moveTo(originX, originY);
+    this.ctx.lineTo(farX, yTop);
+    this.ctx.moveTo(originX, originY);
+    this.ctx.lineTo(farX, yBottom);
+    this.ctx.stroke();
+    this.ctx.restore();
+  }
+
+  private elevationToCanvasY(elevationRad: number, plotH: number): number {
+    const yNorm = Math.max(0, Math.min(1, 0.5 - Math.tan(elevationRad) * 0.45));
+    return yNorm * plotH;
   }
 
   private drawBackground(width: number, height: number): void {

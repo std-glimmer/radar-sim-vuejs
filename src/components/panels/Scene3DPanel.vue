@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Target } from '../../core/types';
+import type { RadarParams, Target } from '../../core/types';
 import { ThreeSceneRenderer } from '../../renderers/three/ThreeSceneRenderer';
 
 const props = defineProps<{
   targets: Target[];
+  sweepAngleRad: number;
+  params: RadarParams;
 }>();
 
 const emit = defineEmits<{
@@ -28,6 +30,7 @@ onMounted(() => {
     onAddTargetFromGroundPoint: (x, z) => emit('addFromScene', { x, z }),
   });
   renderer.syncTargets(props.targets);
+  renderer.updateScanCone(props.sweepAngleRad, props.params);
 
   window.addEventListener('resize', onResize);
 
@@ -42,6 +45,12 @@ onMounted(() => {
 watch(
   () => props.targets,
   (targets) => renderer?.syncTargets(targets),
+  { deep: true },
+);
+
+watch(
+  () => [props.sweepAngleRad, props.params],
+  () => renderer?.updateScanCone(props.sweepAngleRad, props.params),
   { deep: true },
 );
 

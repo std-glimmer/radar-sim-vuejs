@@ -33,6 +33,7 @@ export class RadarCanvasRenderer {
 
     this.fadeBackground(width, height);
     this.drawScope(cx, cy, radius);
+    this.drawScanConeSector(cx, cy, radius, sweepAngleRad, params.fovDeg);
     this.drawSweep(cx, cy, radius, sweepAngleRad);
     this.drawDetections(cx, cy, radius, detections, params.maxRangeMeters);
   }
@@ -78,6 +79,36 @@ export class RadarCanvasRenderer {
     this.ctx.lineTo(x, y);
     this.ctx.stroke();
 
+    this.ctx.restore();
+  }
+
+  private drawScanConeSector(
+    cx: number,
+    cy: number,
+    radius: number,
+    sweepAngleRad: number,
+    fovDeg: number,
+  ): void {
+    const halfFovRad = (fovDeg * Math.PI) / 360;
+    const start = sweepAngleRad - halfFovRad - Math.PI / 2;
+    const end = sweepAngleRad + halfFovRad - Math.PI / 2;
+
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.moveTo(cx, cy);
+    this.ctx.arc(cx, cy, radius, start, end, false);
+    this.ctx.closePath();
+    this.ctx.fillStyle = 'rgba(96, 255, 162, 0.08)';
+    this.ctx.fill();
+
+    this.ctx.strokeStyle = 'rgba(131, 255, 191, 0.28)';
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.moveTo(cx, cy);
+    this.ctx.lineTo(cx + Math.cos(start) * radius, cy + Math.sin(start) * radius);
+    this.ctx.moveTo(cx, cy);
+    this.ctx.lineTo(cx + Math.cos(end) * radius, cy + Math.sin(end) * radius);
+    this.ctx.stroke();
     this.ctx.restore();
   }
 
