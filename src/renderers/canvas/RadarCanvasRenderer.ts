@@ -13,12 +13,14 @@ interface BScopeContactMark {
   y: number;
   alpha: number;
   dashLen: number;
+  expiresAtVisit: number;
 }
 
 export class RadarCanvasRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly bScopeLineMarks = new Map<number, Map<string, BScopeContactMark>>();
+  private readonly bScopeLineVisits = new Map<number, number>();
   private bScopeLastLine: number | null = null;
   private bScopeSignature = '';
 
@@ -149,17 +151,29 @@ export class RadarCanvasRenderer {
 
     if (nextSignature !== this.bScopeSignature) {
       this.bScopeLineMarks.clear();
+      this.bScopeLineVisits.clear();
       this.bScopeLastLine = null;
       this.bScopeSignature = nextSignature;
     }
 
     if (this.bScopeLastLine !== scanLine) {
-      this.bScopeLineMarks.set(scanLine, new Map());
+      const nextVisit = (this.bScopeLineVisits.get(scanLine) ?? 0) + 1;
+      this.bScopeLineVisits.set(scanLine, nextVisit);
       this.bScopeLastLine = scanLine;
     }
 
+    const currentLineVisit = this.bScopeLineVisits.get(scanLine) ?? 1;
     const lineMarks = this.bScopeLineMarks.get(scanLine) ?? new Map<string, BScopeContactMark>();
     this.bScopeLineMarks.set(scanLine, lineMarks);
+
+    for (const [line, marksByTarget] of this.bScopeLineMarks.entries()) {
+      const lineVisit = this.bScopeLineVisits.get(line) ?? 1;
+      for (const [targetId, mark] of marksByTarget.entries()) {
+        if (mark.expiresAtVisit < lineVisit) {
+          marksByTarget.delete(targetId);
+        }
+      }
+    }
 
     this.fadeBackground(width, height);
 
@@ -229,7 +243,13 @@ export class RadarCanvasRenderer {
       const alpha = 0.3 + detection.strength * 0.7;
       const cursorWidthPx = Math.max(6, (params.cursorWidthMeters / Math.max(1, params.maxRangeMeters)) * plotW);
       const dashLen = Math.max(3, (cursorWidthPx * 0.85) / 1.5);
-      lineMarks.set(detection.targetId, { x, y, alpha, dashLen });
+      lineMarks.set(detection.targetId, {
+        x,
+        y,
+        alpha,
+        dashLen,
+        expiresAtVisit: currentLineVisit + 2,
+      });
     }
 
     this.ctx.save();

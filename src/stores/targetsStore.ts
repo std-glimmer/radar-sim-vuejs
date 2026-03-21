@@ -5,9 +5,22 @@ import type { NewTargetInput, Target } from '../core/types';
 let targetSeq = 1;
 
 function makeTargetId(): string {
-  const id = `T-${String(targetSeq).padStart(3, '0')}`;
+  const id = `TGT-${String(targetSeq).padStart(2, '0')}`;
   targetSeq += 1;
   return id;
+}
+
+function reseedTargetSeq(existingTargets: Target[]): void {
+  let maxSeq = 0;
+  for (const target of existingTargets) {
+    const match = /^TGT-(\d+)$/.exec(target.id);
+    if (!match) {
+      continue;
+    }
+    maxSeq = Math.max(maxSeq, Number(match[1]));
+  }
+
+  targetSeq = maxSeq + 1;
 }
 
 export const useTargetsStore = defineStore('targets', () => {
@@ -19,7 +32,6 @@ export const useTargetsStore = defineStore('targets', () => {
     targets.value.push({
       id: makeTargetId(),
       position: { ...input.position },
-      velocity: { ...input.velocity },
     });
   }
 
@@ -31,8 +43,8 @@ export const useTargetsStore = defineStore('targets', () => {
     targets.value = nextTargets.map((target) => ({
       id: target.id,
       position: { ...target.position },
-      velocity: { ...target.velocity },
     }));
+    reseedTargetSeq(targets.value);
   }
 
   return {

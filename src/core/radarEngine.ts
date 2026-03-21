@@ -13,7 +13,6 @@ function cloneTargets(targets: Target[]): Target[] {
   return targets.map((target) => ({
     id: target.id,
     position: { ...target.position },
-    velocity: { ...target.velocity },
   }));
 }
 
@@ -47,7 +46,6 @@ export class RadarEngine {
     const boundedDt = clamp(dtSec, 0, 0.2);
     this.simTimeSec += boundedDt;
     this.updateSweep(boundedDt);
-    this.integrateTargets(boundedDt);
 
     return {
       simTimeSec: this.simTimeSec,
@@ -106,14 +104,6 @@ export class RadarEngine {
 
     this.sweepAngleRad = normalizeAngleRad(scanCenterAzimuthRad + this.scanAzimuthRelRad);
     this.sweepElevationRad = this.scanElevationRelRad + antennaTiltRad;
-  }
-
-  private integrateTargets(dtSec: number): void {
-    for (const target of this.targets) {
-      target.position.x += target.velocity.x * dtSec;
-      target.position.y += target.velocity.y * dtSec;
-      target.position.z += target.velocity.z * dtSec;
-    }
   }
 
   private computeDetections(): Detection[] {

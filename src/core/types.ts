@@ -24,7 +24,6 @@ export interface RadarParams {
 export interface Target {
   id: string;
   position: Vec3;
-  velocity: Vec3;
 }
 
 export interface Detection {
@@ -66,5 +65,4 @@ export interface EngineState {
 
 export interface NewTargetInput {
   position: Vec3;
-  velocity: Vec3;
 }

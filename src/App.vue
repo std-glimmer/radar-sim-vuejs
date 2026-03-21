@@ -2,11 +2,12 @@
 import { storeToRefs } from 'pinia';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import RadarParamsControls from './components/controls/RadarParamsControls.vue';
-import TargetForm from './components/controls/TargetForm.vue';
 import SimulationLayout from './components/layout/SimulationLayout.vue';
 import RadarScopePanel from './components/panels/RadarScopePanel.vue';
 import Scene3DPanel from './components/panels/Scene3DPanel.vue';
 import SideProjectionPanel from './components/panels/SideProjectionPanel.vue';
+import TargetsWidget from './components/panels/TargetsWidget.vue';
+import { bearingRad, clamp, elevationRad, magnitude, normalizeAngleRad as normalizePositiveAngleRad, shortestAngleDiffRad as shortestAngleDiffRadCore } from './core/math';
 import { SimulationRuntime } from './core/simulationRuntime';
 import type {
   Mig29RadarMode,
@@ -16,6 +17,7 @@ import type {
   RadarCursorState,
   RadarParams,
   RadarScopeMode,
+  Target,
 } from './core/types';
 import { useRadarStore } from './stores/radarStore';
 import { useSimStore } from './stores/simStore';
@@ -37,6 +39,7 @@ const controlMode = ref<RadarControlMode>('mig29');
 const mig29RadarMode = ref<Mig29RadarMode>('auto');
 const mig29DeltaH = ref(0);
 const mig29ZonePosition = ref<Mig29ZonePosition>('center');
+const hoveredTargetId = ref<string | null>(null);
 const manualParamsSnapshot = ref<RadarParams | null>(null);
 const migBaseCursorWidth = ref(params.value.cursorWidthMeters);
 const migBaseCursorLength = ref(params.value.cursorLengthMeters);
@@ -56,6 +59,10 @@ const mig29RangeTickKm = computed<number>(() => {
 
   return 20;
 });
+
+const inZoneTargetIds = computed<string[]>(() =>
+  targets.value.filter((target) => isTargetInScanZone(target, params.value)).map((target) => target.id),
+);
 
 const cursor = computed<RadarCursorState>(() => {
   const clampedOffset = clampCursorAzimuthOffset(cursorAzimuthOffsetRad.value, params.value.azimuthScanSpanDeg);
@@ -94,12 +101,57 @@ function addTargetFromScene(payload: { x: number; z: number }): void {
       y: 5000,
       z: payload.z,
     },
-    velocity: {
-      x: 0,
-      y: 0,
-      z: -180,
+  });
+}
+
+function addTargetFromPolar(input: { azimuthOffsetDeg: number; rangeKm: number; altitudeKm: number }): void {
+  const centerAzimuthRad = getScanCenterAzimuthRad(params.value);
+  const azimuthRad = centerAzimuthRad + (input.azimuthOffsetDeg * Math.PI) / 180;
+  const rangeMeters = Math.max(0, input.rangeKm) * 1000;
+  const altitudeMeters = input.altitudeKm * 1000;
+
+  addTarget({
+    position: {
+      x: Math.sin(azimuthRad) * rangeMeters,
+      y: altitudeMeters,
+      z: Math.cos(azimuthRad) * rangeMeters,
     },
   });
+}
+
+function buildFixedMig29Targets(): NewTargetInput[] {
+  const points = [
+    { rangeKm: 22, azDeg: -48, altitude: 2800 },
+    { rangeKm: 28, azDeg: -18, altitude: 4200 },
+    { rangeKm: 34, azDeg: 12, altitude: 5200 },
+    { rangeKm: 41, azDeg: 38, altitude: 3600 },
+    { rangeKm: 56, azDeg: -52, altitude: 6100 },
+    { rangeKm: 63, azDeg: -6, altitude: 7400 },
+    { rangeKm: 78, azDeg: 24, altitude: 4500 },
+    { rangeKm: 96, azDeg: 55, altitude: 8800 },
+    { rangeKm: 118, azDeg: -33, altitude: 6900 },
+    { rangeKm: 142, azDeg: 47, altitude: 10200 },
+  ];
+
+  return points.map((point) => {
+    const azimuthRad = (point.azDeg * Math.PI) / 180;
+    const rangeMeters = point.rangeKm * 1000;
+    return {
+      position: {
+        x: Math.sin(azimuthRad) * rangeMeters,
+        y: point.altitude,
+        z: Math.cos(azimuthRad) * rangeMeters,
+      },
+    };
+  });
+}
+
+function initDefaultMig29Targets(): void {
+  const fixedTargets = buildFixedMig29Targets().map((target, index) => ({
+    id: `TGT-${String(index + 1).padStart(2, '0')}`,
+    position: { ...target.position },
+  }));
+  targetsStore.replaceTargets(fixedTargets);
 }
 
 function removeTarget(targetId: string): void {
@@ -175,6 +227,10 @@ function updateMig29DeltaH(nextValue: number): void {
 
 function updateMig29ZonePosition(nextPosition: Mig29ZonePosition): void {
   mig29ZonePosition.value = nextPosition;
+}
+
+function updateHoveredTarget(nextTargetId: string | null): void {
+  hoveredTargetId.value = nextTargetId;
 }
 
 function applyMig29Params(): void {
@@ -293,19 +349,38 @@ function clampCursorAzimuthOffset(offsetRad: number, scanSpanDeg: number): numbe
   return clampNumber(normalizedOffset, -halfSpanRad, halfSpanRad);
 }
 
+function isTargetInScanZone(target: Target, radarParams: RadarParams): boolean {
+  const centerAzimuthRad = normalizePositiveAngleRad(
+    ((clamp(radarParams.radarAzimuthDeg, -180, 180) + clamp(radarParams.zoneAzimuthOffsetDeg, -180, 180)) * Math.PI) / 180,
+  );
+  const halfAzimuthSpan = (clamp(radarParams.azimuthScanSpanDeg, 10, 360) * Math.PI) / 360;
+
+  const relativePosition = {
+    x: target.position.x,
+    y: target.position.y - radarParams.radarAltitudeMeters,
+    z: target.position.z,
+  };
+
+  const targetBearingRad = bearingRad(relativePosition);
+  const azimuthOffset = Math.abs(shortestAngleDiffRadCore(targetBearingRad, centerAzimuthRad));
+  const inAzimuth = azimuthOffset <= halfAzimuthSpan + 1e-6;
+  if (!inAzimuth) {
+    return false;
+  }
+
+  const rangeMeters = magnitude(relativePosition);
+  if (rangeMeters > radarParams.maxRangeMeters + 1e-6) {
+    return false;
+  }
+
+  const targetElevationRad = elevationRad(relativePosition);
+  const antennaTiltRad = (clamp(radarParams.antennaTiltDeg, -60, 60) * Math.PI) / 180;
+  const halfElevationSpan = (clamp(radarParams.elevationFovDeg, 5, 90) * Math.PI) / 360;
+  return Math.abs(shortestAngleDiffRadCore(targetElevationRad, antennaTiltRad)) <= halfElevationSpan + 1e-6;
+}
+
 onMounted(() => {
-  addTarget({
-    position: { x: -28000, y: 3200, z: 76000 },
-    velocity: { x: 60, y: 0, z: -200 },
-  });
-  addTarget({
-    position: { x: 15000, y: 9000, z: 42000 },
-    velocity: { x: -20, y: -8, z: -130 },
-  });
-  addTarget({
-    position: { x: 48000, y: 2500, z: 102000 },
-    velocity: { x: -75, y: 1, z: -230 },
-  });
+  initDefaultMig29Targets();
 
   runtime.start();
   window.addEventListener('keydown', handleCursorKeydown);
@@ -350,26 +425,35 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <TargetForm @submit="addTarget" />
-
-    <section class="targets-panel">
-      <div v-for="target in targets" :key="target.id" class="target-item">
-        <span>{{ target.id }} · x {{ target.position.x.toFixed(0) }} · y {{ target.position.y.toFixed(0) }} · z {{ target.position.z.toFixed(0) }}</span>
-        <button type="button" @click="removeTarget(target.id)">Remove</button>
-      </div>
-    </section>
-
     <main class="sim-stage">
       <SimulationLayout>
         <template #scene>
-          <Scene3DPanel
-            :targets="targets"
-            :sweep-angle-rad="sweepAngleRad"
-            :sweep-elevation-rad="sweepElevationRad"
-            :params="params"
-            :cursor="cursor"
-            @add-from-scene="addTargetFromScene"
-          />
+          <div class="scene-with-widget">
+            <TargetsWidget
+              :targets="targets"
+              :detections="detections"
+              :params="params"
+              :hovered-target-id="hoveredTargetId"
+              :in-zone-target-ids="inZoneTargetIds"
+              @add-target-polar="addTargetFromPolar"
+              @remove-target="removeTarget"
+              @hover-target="updateHoveredTarget"
+            />
+
+            <Scene3DPanel
+              :targets="targets"
+              :detections="detections"
+              :sweep-angle-rad="sweepAngleRad"
+              :sweep-elevation-rad="sweepElevationRad"
+              :params="params"
+              :cursor="cursor"
+              :control-mode="controlMode"
+              :hovered-target-id="hoveredTargetId"
+              :in-zone-target-ids="inZoneTargetIds"
+              @add-from-scene="addTargetFromScene"
+              @hover-target="updateHoveredTarget"
+            />
+          </div>
         </template>
 
         <template #controls>
@@ -391,10 +475,15 @@ onBeforeUnmount(() => {
 
         <template #side>
           <SideProjectionPanel
+            :targets="targets"
             :detections="detections"
             :params="params"
             :sweep-elevation-rad="sweepElevationRad"
             :cursor="cursor"
+            :control-mode="controlMode"
+            :hovered-target-id="hoveredTargetId"
+            :in-zone-target-ids="inZoneTargetIds"
+            @hover-target="updateHoveredTarget"
           />
         </template>
 
@@ -427,7 +516,7 @@ onBeforeUnmount(() => {
   height: 100vh;
   padding: 12px;
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto 1fr;
   gap: 10px;
 }
 
@@ -451,8 +540,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
-.actions button,
-.targets-panel button {
+.actions button {
   border: 1px solid rgba(145, 201, 246, 0.4);
   background: rgba(29, 51, 73, 0.8);
   color: #e9f4ff;
@@ -461,27 +549,20 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.targets-panel {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-}
-
-.target-item {
-  border: 1px solid rgba(132, 157, 178, 0.3);
-  background: rgba(8, 20, 32, 0.72);
-  border-radius: 6px;
-  padding: 6px 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #d6e8fa;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
 .sim-stage {
   min-height: 0;
+}
+
+.scene-with-widget {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  min-height: 0;
+}
+
+.scene-with-widget :deep(.scene-shell) {
+  flex: 1;
+  min-width: 0;
 }
 
 .sim-stage :deep(.scope-canvas) {
@@ -490,7 +571,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 980px) {
   .app-shell {
-    grid-template-rows: auto auto auto auto;
+    grid-template-rows: auto auto;
     height: auto;
     min-height: 100vh;
   }
@@ -498,6 +579,10 @@ onBeforeUnmount(() => {
   .control-bar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .scene-with-widget {
+    flex-direction: column;
   }
 }
 </style>

@@ -10,9 +10,6 @@ const form = reactive({
   x: 30000,
   y: 6000,
   z: 50000,
-  vx: 0,
-  vy: 0,
-  vz: -210,
 });
 
 function submitForm(): void {
@@ -21,11 +18,6 @@ function submitForm(): void {
       x: Number(form.x),
       y: Number(form.y),
       z: Number(form.z),
-    },
-    velocity: {
-      x: Number(form.vx),
-      y: Number(form.vy),
-      z: Number(form.vz),
     },
   });
 }
@@ -36,9 +28,6 @@ function submitForm(): void {
     <label>x <input v-model.number="form.x" type="number" /></label>
     <label>y <input v-model.number="form.y" type="number" /></label>
     <label>z <input v-model.number="form.z" type="number" /></label>
-    <label>vx <input v-model.number="form.vx" type="number" /></label>
-    <label>vy <input v-model.number="form.vy" type="number" /></label>
-    <label>vz <input v-model.number="form.vz" type="number" /></label>
     <button type="submit">Добавить цель</button>
   </form>
 </template>
@@ -46,7 +35,7 @@ function submitForm(): void {
 <style scoped>
 .target-form {
   display: grid;
-  grid-template-columns: repeat(6, minmax(70px, 1fr)) 140px;
+  grid-template-columns: repeat(3, minmax(70px, 1fr)) 140px;
   gap: 6px;
   align-items: end;
 }

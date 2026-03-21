@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { RadarCursorState, RadarParams, Target } from '../../core/types';
+import type { Detection, RadarCursorState, RadarParams, Target } from '../../core/types';
 
 interface ThreeSceneRendererOptions {
   onAddTargetFromGroundPoint?: (x: number, z: number) => void;
+  onHoverTarget?: (targetId: string | null) => void;
 }
 
 export interface ThreeDisplaySettings {
@@ -11,18 +12,26 @@ export interface ThreeDisplaySettings {
   showFullRegionVerticalFaces: boolean;
   showActiveSector: boolean;
   showActiveSectorVerticalFaces: boolean;
+  showOrientationGuides: boolean;
 }
 
 const FULL_REGION_VERTICAL_DENSITY = 120;
 
 export class ThreeSceneRenderer {
   private readonly scene = new THREE.Scene();
+  private readonly targetSphereGeometry = new THREE.SphereGeometry(1500, 12, 8);
+  private readonly targetCubeGeometry = new THREE.BoxGeometry(2400, 2400, 2400);
   private readonly camera: THREE.PerspectiveCamera;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly controls: OrbitControls;
   private readonly raycaster = new THREE.Raycaster();
   private readonly mouse = new THREE.Vector2();
   private readonly targetMeshes = new Map<string, THREE.Mesh>();
+  private readonly detectionPulseUntilMs = new Map<string, number>();
+  private hoveredTargetId: string | null = null;
+  private inZoneTargetIds = new Set<string>();
+  private pointerHoverTargetId: string | null = null;
+  private radarAltitudeMeters = 0;
   private scanRegionMesh: THREE.Mesh | null = null;
   private fullRegionVerticalSurface: THREE.Mesh | null = null;
   private readonly fullRegionVerticalLines: THREE.Line[] = [];
@@ -30,11 +39,16 @@ export class ThreeSceneRenderer {
   private readonly activeBoundaryMeshes: THREE.Mesh[] = [];
   private readonly activeBoundaryLines: THREE.LineSegments[] = [];
   private cursorMesh: THREE.LineLoop | null = null;
+  private originMesh: THREE.Mesh | null = null;
+  private radarAircraftGroup: THREE.Group | null = null;
+  private orientationGroup: THREE.Group | null = null;
+  private readonly orientationSprites: THREE.Sprite[] = [];
   private displaySettings: ThreeDisplaySettings = {
     showFullRegion: true,
     showFullRegionVerticalFaces: true,
     showActiveSector: true,
     showActiveSectorVerticalFaces: true,
+    showOrientationGuides: false,
   };
   private scanRegionParams: {
     maxRangeMeters: number;
@@ -52,17 +66,20 @@ export class ThreeSceneRenderer {
 
   private readonly host: HTMLElement;
   private readonly onAddTargetFromGroundPoint?: (x: number, z: number) => void;
-  private readonly defaultCameraPosition = new THREE.Vector3(-130000, 90000, 0);
+  private readonly onHoverTarget?: (targetId: string | null) => void;
+  private readonly defaultCameraPosition = new THREE.Vector3(-108000, 98000, -92000);
   private readonly defaultControlsTarget = new THREE.Vector3(0, 0, 0);
 
   constructor(host: HTMLElement, options: ThreeSceneRendererOptions = {}) {
     this.host = host;
     this.onAddTargetFromGroundPoint = options.onAddTargetFromGroundPoint;
+    this.onHoverTarget = options.onHoverTarget;
 
     this.scene.background = new THREE.Color('#081018');
 
     this.camera = new THREE.PerspectiveCamera(60, 1, 10, 1000000);
     this.camera.position.copy(this.defaultCameraPosition);
+    this.camera.up.set(0, 1, 0);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -76,6 +93,8 @@ export class ThreeSceneRenderer {
     this.setupScene();
 
     this.renderer.domElement.addEventListener('pointerdown', this.handlePointerDown);
+    this.renderer.domElement.addEventListener('pointermove', this.handlePointerMove);
+    this.renderer.domElement.addEventListener('pointerleave', this.handlePointerLeave);
   }
 
   syncTargets(targets: Target[]): void {
@@ -85,6 +104,7 @@ export class ThreeSceneRenderer {
       if (!nextIds.has(id)) {
         this.scene.remove(mesh);
         this.targetMeshes.delete(id);
+        this.detectionPulseUntilMs.delete(id);
       }
     }
 
@@ -92,20 +112,35 @@ export class ThreeSceneRenderer {
       let mesh = this.targetMeshes.get(target.id);
       if (!mesh) {
         mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(1500, 12, 8),
-          new THREE.MeshStandardMaterial({ color: '#5be7a9', emissive: '#0d2d23' }),
+          this.targetSphereGeometry,
+          new THREE.MeshStandardMaterial({ color: '#f4d760', emissive: '#332b0a' }),
         );
+        mesh.userData.targetId = target.id;
+        mesh.userData.shape = 'sphere';
         this.targetMeshes.set(target.id, mesh);
         this.scene.add(mesh);
       }
 
-      mesh.position.set(target.position.x, target.position.y, target.position.z);
+      mesh.position.set(-target.position.x, target.position.y, target.position.z);
     }
   }
 
   render(): void {
+    this.applyTargetStyles();
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  updateDetectionFlashes(detections: Detection[]): void {
+    const pulseEnd = performance.now() + 180;
+    for (const detection of detections) {
+      this.detectionPulseUntilMs.set(detection.targetId, pulseEnd);
+    }
+  }
+
+  setTargetHighlights(hoveredTargetId: string | null, inZoneTargetIds: string[]): void {
+    this.hoveredTargetId = hoveredTargetId;
+    this.inZoneTargetIds = new Set(inZoneTargetIds);
   }
 
   setDisplaySettings(nextSettings: Partial<ThreeDisplaySettings>): void {
@@ -117,9 +152,42 @@ export class ThreeSceneRenderer {
     this.applyDisplaySettings();
   }
 
+  setRadarAircraftVisible(visible: boolean): void {
+    if (this.radarAircraftGroup) {
+      this.radarAircraftGroup.visible = visible;
+    }
+  }
+
+  setOriginMarkerVisible(visible: boolean): void {
+    if (this.originMesh) {
+      this.originMesh.visible = visible;
+    }
+  }
+
   resetCameraToDefault(): void {
     this.camera.position.copy(this.defaultCameraPosition);
+    this.camera.up.set(0, 1, 0);
     this.controls.target.copy(this.defaultControlsTarget);
+    this.controls.update();
+  }
+
+  centerCameraOnScanZone(params: RadarParams): void {
+    const centerAzimuthRad = ((params.radarAzimuthDeg + params.zoneAzimuthOffsetDeg) * Math.PI) / 180;
+    const centerElevationRad = (params.antennaTiltDeg * Math.PI) / 180;
+    const centerRange = Math.max(1000, params.maxRangeMeters * 0.5);
+    const planarRange = Math.cos(centerElevationRad) * centerRange;
+    const radarAltitude = params.radarAltitudeMeters;
+
+    const centerPoint = new THREE.Vector3(
+      -Math.sin(centerAzimuthRad) * planarRange,
+      radarAltitude + Math.sin(centerElevationRad) * centerRange,
+      Math.cos(centerAzimuthRad) * planarRange,
+    );
+
+    const defaultOffset = new THREE.Vector3().subVectors(this.defaultCameraPosition, this.defaultControlsTarget);
+    this.camera.position.copy(centerPoint.clone().add(defaultOffset));
+    this.camera.up.set(0, 1, 0);
+    this.controls.target.copy(centerPoint);
     this.controls.update();
   }
 
@@ -132,6 +200,10 @@ export class ThreeSceneRenderer {
     const elevationFovDeg = Math.max(5, params.elevationFovDeg);
     const antennaTiltDeg = Math.max(-60, Math.min(60, params.antennaTiltDeg));
     const scanCenterAzimuthDeg = params.radarAzimuthDeg + params.zoneAzimuthOffsetDeg;
+    this.radarAltitudeMeters = params.radarAltitudeMeters;
+    if (this.radarAircraftGroup) {
+      this.radarAircraftGroup.position.y = this.radarAltitudeMeters;
+    }
 
     if (
       !this.scanRegionMesh ||
@@ -170,23 +242,34 @@ export class ThreeSceneRenderer {
     const antennaTiltRad = (-antennaTiltDeg * Math.PI) / 180;
     const antennaTiltAbsRad = (antennaTiltDeg * Math.PI) / 180;
 
-    this.activeScanMesh.rotation.set(antennaTiltRad, sweepAngleRad, 0);
+    this.activeScanMesh.rotation.set(antennaTiltRad, -sweepAngleRad, 0);
     for (const mesh of this.activeBoundaryMeshes) {
-      mesh.rotation.set(antennaTiltRad, sweepAngleRad, 0);
+      mesh.rotation.set(antennaTiltRad, -sweepAngleRad, 0);
     }
     for (const line of this.activeBoundaryLines) {
-      line.rotation.set(antennaTiltRad, sweepAngleRad, 0);
+      line.rotation.set(antennaTiltRad, -sweepAngleRad, 0);
     }
 
     const scanCenterAzimuthRad = (scanCenterAzimuthDeg * Math.PI) / 180;
     if (this.scanRegionMesh) {
-      this.scanRegionMesh.rotation.set(antennaTiltRad, scanCenterAzimuthRad, 0);
+      this.scanRegionMesh.position.y = this.radarAltitudeMeters;
+      this.scanRegionMesh.rotation.set(antennaTiltRad, -scanCenterAzimuthRad, 0);
     }
     if (this.fullRegionVerticalSurface) {
-      this.fullRegionVerticalSurface.rotation.set(antennaTiltRad, scanCenterAzimuthRad, 0);
+      this.fullRegionVerticalSurface.position.y = this.radarAltitudeMeters;
+      this.fullRegionVerticalSurface.rotation.set(antennaTiltRad, -scanCenterAzimuthRad, 0);
     }
     for (const line of this.fullRegionVerticalLines) {
-      line.rotation.set(antennaTiltRad, scanCenterAzimuthRad, 0);
+      line.position.y = this.radarAltitudeMeters;
+      line.rotation.set(antennaTiltRad, -scanCenterAzimuthRad, 0);
+    }
+
+    this.activeScanMesh.position.y = this.radarAltitudeMeters;
+    for (const mesh of this.activeBoundaryMeshes) {
+      mesh.position.y = this.radarAltitudeMeters;
+    }
+    for (const line of this.activeBoundaryLines) {
+      line.position.y = this.radarAltitudeMeters;
     }
 
     const tiltRad = -(sweepElevationRad - antennaTiltAbsRad);
@@ -241,9 +324,9 @@ export class ThreeSceneRenderer {
     const clampedRange = Math.max(0, Math.min(params.maxRangeMeters, cursor.rangeMeters));
     const centerElevationRad = (params.antennaTiltDeg * Math.PI) / 180;
     const planarRange = Math.cos(centerElevationRad) * clampedRange;
-    const x = Math.sin(cursor.azimuthRad) * planarRange;
+    const x = -Math.sin(cursor.azimuthRad) * planarRange;
     const z = Math.cos(cursor.azimuthRad) * planarRange;
-    const y = Math.sin(centerElevationRad) * clampedRange;
+    const y = this.radarAltitudeMeters + Math.sin(centerElevationRad) * clampedRange;
 
     this.cursorMesh.visible = true;
     this.cursorMesh.position.x = x;
@@ -268,10 +351,17 @@ export class ThreeSceneRenderer {
 
   dispose(): void {
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
+    this.renderer.domElement.removeEventListener('pointermove', this.handlePointerMove);
+    this.renderer.domElement.removeEventListener('pointerleave', this.handlePointerLeave);
     this.controls.dispose();
 
     this.disposeScanMeshes();
     this.disposeCursorMesh();
+    this.disposeRadarAircraftMarker();
+    this.disposeOrientationGuides();
+
+    this.targetSphereGeometry.dispose();
+    this.targetCubeGeometry.dispose();
 
     this.renderer.dispose();
     this.host.removeChild(this.renderer.domElement);
@@ -289,6 +379,8 @@ export class ThreeSceneRenderer {
       new THREE.SphereGeometry(1200, 16, 12),
       new THREE.MeshBasicMaterial({ color: '#ffcb6b' }),
     );
+    origin.position.y = 0;
+    this.originMesh = origin;
 
     this.groundPlane.rotateX(-Math.PI / 2);
 
@@ -298,6 +390,184 @@ export class ThreeSceneRenderer {
     this.scene.add(axes);
     this.scene.add(origin);
     this.scene.add(this.groundPlane);
+    this.buildRadarAircraftMarker();
+    this.buildOrientationGuides();
+  }
+
+  private buildRadarAircraftMarker(): void {
+    const group = new THREE.Group();
+
+    const silhouettePoints = [
+      new THREE.Vector3(0, 0, -2600),
+      new THREE.Vector3(500, 0, -1700),
+      new THREE.Vector3(2200, 0, -700),
+      new THREE.Vector3(1300, 0, -50),
+      new THREE.Vector3(800, 0, 1350),
+      new THREE.Vector3(350, 0, 2300),
+      new THREE.Vector3(0, 0, 2480),
+      new THREE.Vector3(-350, 0, 2300),
+      new THREE.Vector3(-800, 0, 1350),
+      new THREE.Vector3(-1300, 0, -50),
+      new THREE.Vector3(-2200, 0, -700),
+      new THREE.Vector3(-500, 0, -1700),
+    ];
+
+    const silhouetteGeometry = new THREE.BufferGeometry().setFromPoints(silhouettePoints);
+    const silhouetteLine = new THREE.LineLoop(
+      silhouetteGeometry,
+      new THREE.LineBasicMaterial({ color: '#9fb3c5' }),
+    );
+    group.add(silhouetteLine);
+
+    const finGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 1600),
+      new THREE.Vector3(0, 620, 1750),
+      new THREE.Vector3(0, 0, 1900),
+    ]);
+    const finLine = new THREE.Line(
+      finGeometry,
+      new THREE.LineBasicMaterial({ color: '#9fb3c5' }),
+    );
+    group.add(finLine);
+
+    group.position.set(0, 0, 0);
+    group.visible = false;
+    this.radarAircraftGroup = group;
+    this.scene.add(group);
+  }
+
+  private disposeRadarAircraftMarker(): void {
+    if (!this.radarAircraftGroup) {
+      return;
+    }
+
+    this.scene.remove(this.radarAircraftGroup);
+    this.radarAircraftGroup.traverse((object) => {
+      const anyObject = object as { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
+      if (anyObject.geometry) {
+        anyObject.geometry.dispose();
+      }
+      if (Array.isArray(anyObject.material)) {
+        anyObject.material.forEach((material) => material.dispose());
+      } else if (anyObject.material) {
+        anyObject.material.dispose();
+      }
+    });
+
+    this.radarAircraftGroup = null;
+  }
+
+  private buildOrientationGuides(): void {
+    const guideGroup = new THREE.Group();
+    const axisLength = 36000;
+    const headLength = 4200;
+    const headWidth = 2200;
+
+    const upArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(0, 0, 0),
+      axisLength,
+      new THREE.Color('#7dff9e'),
+      headLength,
+      headWidth,
+    );
+    const downArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(0, 0, 0),
+      axisLength,
+      new THREE.Color('#ff8e8e'),
+      headLength,
+      headWidth,
+    );
+    const northArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(0, 0, 0),
+      axisLength,
+      new THREE.Color('#8de3ff'),
+      headLength,
+      headWidth,
+    );
+
+    guideGroup.add(upArrow);
+    guideGroup.add(downArrow);
+    guideGroup.add(northArrow);
+
+    const upSprite = this.createTextSprite('UP', '#7dff9e');
+    upSprite.position.set(0, axisLength + 5000, 0);
+    guideGroup.add(upSprite);
+    this.orientationSprites.push(upSprite);
+
+    const downSprite = this.createTextSprite('DOWN', '#ff8e8e');
+    downSprite.position.set(0, -(axisLength + 5000), 0);
+    guideGroup.add(downSprite);
+    this.orientationSprites.push(downSprite);
+
+    const northSprite = this.createTextSprite('NORTH', '#8de3ff');
+    northSprite.position.set(0, 3500, axisLength + 5000);
+    guideGroup.add(northSprite);
+    this.orientationSprites.push(northSprite);
+
+    this.orientationGroup = guideGroup;
+    this.scene.add(guideGroup);
+  }
+
+  private disposeOrientationGuides(): void {
+    if (this.orientationGroup) {
+      this.scene.remove(this.orientationGroup);
+      this.orientationGroup.traverse((object) => {
+        const anyObject = object as { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
+        if (anyObject.geometry) {
+          anyObject.geometry.dispose();
+        }
+        if (Array.isArray(anyObject.material)) {
+          anyObject.material.forEach((material) => material.dispose());
+        } else if (anyObject.material) {
+          anyObject.material.dispose();
+        }
+      });
+      this.orientationGroup = null;
+    }
+
+    for (const sprite of this.orientationSprites) {
+      const material = sprite.material as THREE.SpriteMaterial;
+      material.map?.dispose();
+      material.dispose();
+    }
+    this.orientationSprites.length = 0;
+  }
+
+  private createTextSprite(label: string, color: string): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 96;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('2D context is not available for orientation label sprite');
+    }
+
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.font = '700 42px sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    context.fillRect(8, 8, canvas.width - 16, canvas.height - 16);
+    context.fillStyle = color;
+    context.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(14000, 5200, 1);
+    sprite.renderOrder = 1000;
+    return sprite;
   }
 
   private rebuildScanRegionGeometry(
@@ -628,6 +898,10 @@ export class ThreeSceneRenderer {
     for (const line of this.activeBoundaryLines) {
       line.visible = showActiveFaces;
     }
+
+    if (this.orientationGroup) {
+      this.orientationGroup.visible = this.displaySettings.showOrientationGuides;
+    }
   }
 
   private radarToWorld(range: number, azimuthRad: number, elevationRad: number): THREE.Vector3 {
@@ -653,6 +927,70 @@ export class ThreeSceneRenderer {
     return Math.max(1, Math.min(45, params.beamElevationDeg));
   }
 
+  private applyTargetStyles(): void {
+    const now = performance.now();
+
+    for (const [id, mesh] of this.targetMeshes.entries()) {
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      const isPulse = (this.detectionPulseUntilMs.get(id) ?? 0) > now;
+      const isHovered = this.hoveredTargetId === id;
+      const isInZone = this.inZoneTargetIds.has(id);
+
+      const desiredShape = isInZone ? 'cube' : 'sphere';
+      if (mesh.userData.shape !== desiredShape) {
+        mesh.geometry = isInZone ? this.targetCubeGeometry : this.targetSphereGeometry;
+        mesh.userData.shape = desiredShape;
+      }
+
+      if (isPulse) {
+        material.color.set('#ffffff');
+        material.emissive.set('#6f6f6f');
+      } else if (isInZone) {
+        material.color.set('#ff8a8a');
+        material.emissive.set('#441010');
+      } else {
+        material.color.set('#f4d760');
+        material.emissive.set('#332b0a');
+      }
+
+      mesh.scale.setScalar(isHovered ? 1.2 : 1);
+    }
+  }
+
+  private emitHoverTarget(nextTargetId: string | null): void {
+    if (this.pointerHoverTargetId === nextTargetId) {
+      return;
+    }
+
+    this.pointerHoverTargetId = nextTargetId;
+    this.onHoverTarget?.(nextTargetId);
+  }
+
+  private handlePointerMove = (event: PointerEvent): void => {
+    if (!this.onHoverTarget) {
+      return;
+    }
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const intersects = this.raycaster.intersectObjects(Array.from(this.targetMeshes.values()), false);
+    if (intersects.length === 0) {
+      this.emitHoverTarget(null);
+      return;
+    }
+
+    const mesh = intersects[0].object as THREE.Mesh;
+    const targetId = (mesh.userData.targetId as string | undefined) ?? null;
+    this.emitHoverTarget(targetId);
+  };
+
+  private handlePointerLeave = (): void => {
+    this.emitHoverTarget(null);
+  };
+
   private handlePointerDown = (event: PointerEvent): void => {
     if (!this.onAddTargetFromGroundPoint) {
       return;
@@ -670,6 +1008,6 @@ export class ThreeSceneRenderer {
     }
 
     const point = intersects[0].point;
-    this.onAddTargetFromGroundPoint(point.x, point.z);
+    this.onAddTargetFromGroundPoint(-point.x, point.z);
   };
 }

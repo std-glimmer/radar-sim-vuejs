@@ -1,8 +1,9 @@
-import type { Detection, RadarCursorState, RadarParams } from '../../core/types';
+import type { Detection, RadarCursorState, RadarParams, Target } from '../../core/types';
 
 export class SideViewRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
+  private projectedTargets: Array<{ id: string; x: number; y: number }> = [];
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
@@ -25,10 +26,14 @@ export class SideViewRenderer {
   }
 
   render(
+    targets: Target[],
     detections: Detection[],
     params: RadarParams,
     sweepElevationRad: number,
     cursor: RadarCursorState | null,
+    showRadarAircraft: boolean,
+    hoveredTargetId: string | null,
+    inZoneTargetIds: string[],
   ): void {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
@@ -46,17 +51,114 @@ export class SideViewRenderer {
 
     this.drawScanCone(plotW, plotH, params, sweepElevationRad, scale);
     this.drawCursorRangeLine(plotW, plotH, params.maxRangeMeters, cursor);
-
-    for (const detection of detections) {
-      const x = (detection.groundDistanceMeters / params.maxRangeMeters) * plotW;
-      const absoluteAltitude = params.radarAltitudeMeters + detection.relativeAltitudeMeters;
-      const y = this.altitudeToPlotY(absoluteAltitude, plotH, scale);
-
-      this.ctx.fillStyle = 'rgba(224, 248, 255, 0.9)';
-      this.ctx.beginPath();
-      this.ctx.arc(x, y, 3, 0, Math.PI * 2);
-      this.ctx.fill();
+    if (showRadarAircraft) {
+      this.drawRadarAircraftMarker(plotH, params, scale);
     }
+
+    const detectedIds = new Set(detections.map((detection) => detection.targetId));
+    const inZoneIdSet = new Set(inZoneTargetIds);
+    this.projectedTargets = [];
+
+    for (const target of targets) {
+      const groundDistanceMeters = Math.hypot(target.position.x, target.position.z);
+      const x = (groundDistanceMeters / params.maxRangeMeters) * plotW;
+      if (x < -5 || x > plotW + 5) {
+        continue;
+      }
+
+      const y = this.altitudeToPlotY(target.position.y, plotH, scale);
+      const isDetected = detectedIds.has(target.id);
+      const isHovered = hoveredTargetId === target.id;
+      const isInZone = inZoneIdSet.has(target.id);
+
+      this.projectedTargets.push({ id: target.id, x: pad + x, y: pad + y });
+
+      let fillStyle = 'rgba(244, 215, 96, 0.88)';
+      if (isInZone) {
+        fillStyle = 'rgba(255, 158, 158, 0.92)';
+      }
+      if (isDetected) {
+        fillStyle = 'rgba(255, 255, 255, 0.98)';
+      }
+
+      const radius = isHovered ? 4.2 : 3;
+      this.ctx.fillStyle = fillStyle;
+      if (isInZone) {
+        const side = radius * 2;
+        this.ctx.fillRect(x - side * 0.5, y - side * 0.5, side, side);
+      } else {
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+
+      if (isInZone && !isDetected) {
+        this.ctx.strokeStyle = 'rgba(255, 176, 176, 0.9)';
+        this.ctx.lineWidth = 1;
+        const side = radius * 2 + 3;
+        this.ctx.strokeRect(x - side * 0.5, y - side * 0.5, side, side);
+      }
+
+      if (isHovered) {
+        this.ctx.strokeStyle = 'rgba(255, 232, 200, 0.95)';
+        this.ctx.lineWidth = 1;
+        if (isInZone) {
+          const hoverSide = radius * 2 + 5;
+          this.ctx.strokeRect(x - hoverSide * 0.5, y - hoverSide * 0.5, hoverSide, hoverSide);
+        } else {
+          this.ctx.beginPath();
+          this.ctx.arc(x, y, radius + 2, 0, Math.PI * 2);
+          this.ctx.stroke();
+        }
+      }
+    }
+
+    this.ctx.restore();
+  }
+
+  pickTargetAt(clientX: number, clientY: number): string | null {
+    let closestTarget: { id: string; distanceSq: number } | null = null;
+    const maxDistanceSq = 8 * 8;
+
+    for (const target of this.projectedTargets) {
+      const dx = target.x - clientX;
+      const dy = target.y - clientY;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > maxDistanceSq) {
+        continue;
+      }
+      if (!closestTarget || distanceSq < closestTarget.distanceSq) {
+        closestTarget = { id: target.id, distanceSq };
+      }
+    }
+
+    return closestTarget?.id ?? null;
+  }
+
+  private drawRadarAircraftMarker(
+    plotH: number,
+    params: RadarParams,
+    scale: { min: number; max: number },
+  ): void {
+    const x = 0;
+    const y = this.altitudeToPlotY(params.radarAltitudeMeters, plotH, scale);
+
+    this.ctx.save();
+    this.ctx.strokeStyle = 'rgba(187, 204, 219, 0.95)';
+    this.ctx.lineWidth = 1.4;
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(x + 2, y);
+    this.ctx.lineTo(x + 22, y);
+    this.ctx.moveTo(x + 9, y - 3.8);
+    this.ctx.lineTo(x + 16, y - 3.8);
+    this.ctx.moveTo(x + 12, y - 3.8);
+    this.ctx.lineTo(x + 12, y + 4.5);
+    this.ctx.moveTo(x + 22, y);
+    this.ctx.lineTo(x + 18, y - 2.8);
+    this.ctx.moveTo(x + 22, y);
+    this.ctx.lineTo(x + 18, y + 2.8);
+    this.ctx.stroke();
 
     this.ctx.restore();
   }

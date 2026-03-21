@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import type { RadarCursorState, RadarParams, Target } from '../../core/types';
+import type { Detection, RadarControlMode, RadarCursorState, RadarParams, Target } from '../../core/types';
 import { ThreeSceneRenderer } from '../../renderers/three/ThreeSceneRenderer';
 
 const props = defineProps<{
   targets: Target[];
+  detections: Detection[];
   sweepAngleRad: number;
   sweepElevationRad: number;
   params: RadarParams;
   cursor: RadarCursorState | null;
+  controlMode: RadarControlMode;
+  hoveredTargetId: string | null;
+  inZoneTargetIds: string[];
 }>();
 
 const emit = defineEmits<{
   addFromScene: [payload: { x: number; z: number }];
+  hoverTarget: [targetId: string | null];
 }>();
 
 const hostRef = ref<HTMLDivElement | null>(null);
@@ -24,6 +29,7 @@ const displaySettings = reactive({
   showFullRegionVerticalFaces: true,
   showActiveSector: true,
   showActiveSectorVerticalFaces: true,
+  showOrientationGuides: false,
 });
 
 function onResize(): void {
@@ -34,6 +40,23 @@ function centerCamera(): void {
   renderer?.resetCameraToDefault();
 }
 
+function centerCameraOnScanZone(): void {
+  renderer?.centerCameraOnScanZone(props.params);
+}
+
+function autoCenterForMig29(): void {
+  if (props.controlMode !== 'mig29') {
+    return;
+  }
+
+  renderer?.centerCameraOnScanZone(props.params);
+}
+
+function syncRadarAircraftMarker(): void {
+  renderer?.setRadarAircraftVisible(props.controlMode === 'mig29');
+  renderer?.setOriginMarkerVisible(props.controlMode !== 'mig29');
+}
+
 onMounted(() => {
   if (!hostRef.value) {
     return;
@@ -41,11 +64,16 @@ onMounted(() => {
 
   renderer = new ThreeSceneRenderer(hostRef.value, {
     onAddTargetFromGroundPoint: (x, z) => emit('addFromScene', { x, z }),
+    onHoverTarget: (targetId) => emit('hoverTarget', targetId),
   });
   renderer.syncTargets(props.targets);
+  renderer.updateDetectionFlashes(props.detections);
+  renderer.setTargetHighlights(props.hoveredTargetId, props.inZoneTargetIds);
   renderer.setDisplaySettings(displaySettings);
   renderer.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
   renderer.updateCursor(props.cursor, props.params);
+  syncRadarAircraftMarker();
+  autoCenterForMig29();
 
   window.addEventListener('resize', onResize);
 
@@ -64,6 +92,18 @@ watch(
 );
 
 watch(
+  () => props.detections,
+  (detections) => renderer?.updateDetectionFlashes(detections),
+  { deep: true },
+);
+
+watch(
+  () => [props.hoveredTargetId, props.inZoneTargetIds],
+  () => renderer?.setTargetHighlights(props.hoveredTargetId, props.inZoneTargetIds),
+  { deep: true },
+);
+
+watch(
   () => [props.sweepAngleRad, props.sweepElevationRad, props.params],
   () => {
     renderer?.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
@@ -76,6 +116,16 @@ watch(
   () => [props.cursor, props.params],
   () => renderer?.updateCursor(props.cursor, props.params),
   { deep: true },
+);
+
+watch(
+  () => props.controlMode,
+  autoCenterForMig29,
+);
+
+watch(
+  () => props.controlMode,
+  syncRadarAircraftMarker,
 );
 
 watch(
@@ -99,31 +149,37 @@ onBeforeUnmount(() => {
   <div class="scene-shell">
     <div ref="hostRef" class="scene-host"></div>
 
-    <section class="display-panel">
-      <h3>Display</h3>
+    <section class="display-panel panel-block">
+        <h3>Display</h3>
 
-      <label>
-        <input v-model="displaySettings.showFullRegion" type="checkbox" />
-        Full region
-      </label>
+        <label>
+          <input v-model="displaySettings.showFullRegion" type="checkbox" />
+          Full region
+        </label>
 
-      <label>
-        <input v-model="displaySettings.showFullRegionVerticalFaces" type="checkbox" />
-        Full region vertical faces
-      </label>
+        <label>
+          <input v-model="displaySettings.showFullRegionVerticalFaces" type="checkbox" />
+          Full region vertical faces
+        </label>
 
-      <label>
-        <input v-model="displaySettings.showActiveSector" type="checkbox" />
-        Active sector
-      </label>
+        <label>
+          <input v-model="displaySettings.showActiveSector" type="checkbox" />
+          Active sector
+        </label>
 
-      <label>
-        <input v-model="displaySettings.showActiveSectorVerticalFaces" type="checkbox" />
-        Active sector vertical faces
-      </label>
+        <label>
+          <input v-model="displaySettings.showActiveSectorVerticalFaces" type="checkbox" />
+          Active sector vertical faces
+        </label>
 
-      <button type="button" class="center-button" @click="centerCamera">Center Camera</button>
-    </section>
+        <label>
+          <input v-model="displaySettings.showOrientationGuides" type="checkbox" />
+          Show north/up/down marks
+        </label>
+
+        <button type="button" class="center-button" @click="centerCamera">Center Camera</button>
+        <button type="button" class="center-button" @click="centerCameraOnScanZone">Center On Scan Zone</button>
+      </section>
   </div>
 </template>
 
@@ -139,20 +195,24 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
-.display-panel {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  min-width: 220px;
+.panel-block {
   border: 1px solid rgba(151, 188, 215, 0.38);
   background: rgba(5, 13, 21, 0.78);
   backdrop-filter: blur(3px);
   border-radius: 8px;
   padding: 8px 10px;
+  color: #d5e8fb;
+}
+
+.display-panel {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 220px;
+  margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  color: #d5e8fb;
   font-size: 12px;
 }
 
