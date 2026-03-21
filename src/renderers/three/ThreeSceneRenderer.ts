@@ -6,6 +6,15 @@ interface ThreeSceneRendererOptions {
   onAddTargetFromGroundPoint?: (x: number, z: number) => void;
 }
 
+export interface ThreeDisplaySettings {
+  showFullRegion: boolean;
+  showFullRegionVerticalFaces: boolean;
+  showActiveSector: boolean;
+  showActiveSectorVerticalFaces: boolean;
+}
+
+const FULL_REGION_VERTICAL_DENSITY = 120;
+
 export class ThreeSceneRenderer {
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
@@ -15,7 +24,17 @@ export class ThreeSceneRenderer {
   private readonly mouse = new THREE.Vector2();
   private readonly targetMeshes = new Map<string, THREE.Mesh>();
   private scanRegionMesh: THREE.Mesh | null = null;
+  private fullRegionVerticalSurface: THREE.Mesh | null = null;
+  private readonly fullRegionVerticalLines: THREE.LineLoop[] = [];
   private activeScanMesh: THREE.Mesh | null = null;
+  private readonly activeBoundaryMeshes: THREE.Mesh[] = [];
+  private readonly activeBoundaryLines: THREE.LineSegments[] = [];
+  private displaySettings: ThreeDisplaySettings = {
+    showFullRegion: true,
+    showFullRegionVerticalFaces: true,
+    showActiveSector: true,
+    showActiveSectorVerticalFaces: true,
+  };
   private scanRegionParams: {
     maxRangeMeters: number;
     azimuthFovDeg: number;
@@ -28,6 +47,8 @@ export class ThreeSceneRenderer {
 
   private readonly host: HTMLElement;
   private readonly onAddTargetFromGroundPoint?: (x: number, z: number) => void;
+  private readonly defaultCameraPosition = new THREE.Vector3(130000, 90000, 0);
+  private readonly defaultControlsTarget = new THREE.Vector3(0, 0, 0);
 
   constructor(host: HTMLElement, options: ThreeSceneRendererOptions = {}) {
     this.host = host;
@@ -36,7 +57,7 @@ export class ThreeSceneRenderer {
     this.scene.background = new THREE.Color('#081018');
 
     this.camera = new THREE.PerspectiveCamera(60, 1, 10, 1000000);
-    this.camera.position.set(85000, 65000, 85000);
+    this.camera.position.copy(this.defaultCameraPosition);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -82,6 +103,21 @@ export class ThreeSceneRenderer {
     this.renderer.render(this.scene, this.camera);
   }
 
+  setDisplaySettings(nextSettings: Partial<ThreeDisplaySettings>): void {
+    this.displaySettings = {
+      ...this.displaySettings,
+      ...nextSettings,
+    };
+
+    this.applyDisplaySettings();
+  }
+
+  resetCameraToDefault(): void {
+    this.camera.position.copy(this.defaultCameraPosition);
+    this.controls.target.copy(this.defaultControlsTarget);
+    this.controls.update();
+  }
+
   updateScanCone(sweepAngleRad: number, params: RadarParams): void {
     const rangeMeters = Math.max(5000, params.maxRangeMeters);
     const azimuthFovDeg = Math.max(1, params.fovDeg);
@@ -108,6 +144,12 @@ export class ThreeSceneRenderer {
     }
 
     this.activeScanMesh.rotation.set(0, sweepAngleRad, 0);
+    for (const mesh of this.activeBoundaryMeshes) {
+      mesh.rotation.set(0, sweepAngleRad, 0);
+    }
+    for (const line of this.activeBoundaryLines) {
+      line.rotation.set(0, sweepAngleRad, 0);
+    }
   }
 
   resize(): void {
@@ -208,6 +250,10 @@ export class ThreeSceneRenderer {
 
     this.activeScanMesh = new THREE.Mesh(activeGeometry, activeMaterial);
     this.scene.add(this.activeScanMesh);
+
+    this.buildFullRegionVerticalFaces(maxRangeMeters, elevationFovDeg);
+    this.buildActiveBoundaryFaces(maxRangeMeters, azimuthFovDeg, elevationFovDeg);
+    this.applyDisplaySettings();
   }
 
   private disposeScanMeshes(): void {
@@ -224,6 +270,234 @@ export class ThreeSceneRenderer {
       (this.activeScanMesh.material as THREE.Material).dispose();
       this.activeScanMesh = null;
     }
+
+    if (this.fullRegionVerticalSurface) {
+      this.scene.remove(this.fullRegionVerticalSurface);
+      this.fullRegionVerticalSurface.geometry.dispose();
+      (this.fullRegionVerticalSurface.material as THREE.Material).dispose();
+      this.fullRegionVerticalSurface = null;
+    }
+
+    for (const line of this.fullRegionVerticalLines) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+    this.fullRegionVerticalLines.length = 0;
+
+    for (const mesh of this.activeBoundaryMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.activeBoundaryMeshes.length = 0;
+
+    for (const line of this.activeBoundaryLines) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+    this.activeBoundaryLines.length = 0;
+  }
+
+  private buildActiveBoundaryFaces(
+    maxRangeMeters: number,
+    azimuthFovDeg: number,
+    elevationFovDeg: number,
+  ): void {
+    const halfAzimuthRad = (azimuthFovDeg * Math.PI) / 360;
+    const halfElevationRad = (elevationFovDeg * Math.PI) / 360;
+
+    for (const sign of [-1, 1] as const) {
+      const azimuth = sign * halfAzimuthRad;
+      const top = this.radarToWorld(maxRangeMeters, azimuth, halfElevationRad);
+      const bottom = this.radarToWorld(maxRangeMeters, azimuth, -halfElevationRad);
+
+      const faceGeometry = new THREE.BufferGeometry();
+      faceGeometry.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          [
+            0,
+            0,
+            0,
+            top.x,
+            top.y,
+            top.z,
+            bottom.x,
+            bottom.y,
+            bottom.z,
+          ],
+          3,
+        ),
+      );
+      faceGeometry.setIndex([0, 1, 2]);
+      faceGeometry.computeVertexNormals();
+
+      const faceMaterial = new THREE.MeshBasicMaterial({
+        color: '#8fffd2',
+        transparent: true,
+        opacity: 0.16,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+
+      const faceMesh = new THREE.Mesh(faceGeometry, faceMaterial);
+      this.activeBoundaryMeshes.push(faceMesh);
+      this.scene.add(faceMesh);
+
+      const edgeGeometry = new THREE.BufferGeometry();
+      edgeGeometry.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          [
+            0,
+            0,
+            0,
+            top.x,
+            top.y,
+            top.z,
+            0,
+            0,
+            0,
+            bottom.x,
+            bottom.y,
+            bottom.z,
+            top.x,
+            top.y,
+            top.z,
+            bottom.x,
+            bottom.y,
+            bottom.z,
+          ],
+          3,
+        ),
+      );
+
+      const edgeMaterial = new THREE.LineBasicMaterial({
+        color: '#c1ffe7',
+        transparent: true,
+        opacity: 0.75,
+      });
+
+      const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+      this.activeBoundaryLines.push(edgeLines);
+      this.scene.add(edgeLines);
+    }
+  }
+
+  private buildFullRegionVerticalFaces(maxRangeMeters: number, elevationFovDeg: number): void {
+    const halfElevationRad = (elevationFovDeg * Math.PI) / 360;
+    const segments = FULL_REGION_VERTICAL_DENSITY;
+
+    const surfaceVertices: number[] = [];
+    const topLoop: number[] = [];
+    const bottomLoop: number[] = [];
+
+    for (let i = 0; i < segments; i += 1) {
+      const a = (i / segments) * Math.PI * 2;
+      const top = this.radarToWorld(maxRangeMeters, a, halfElevationRad);
+      const bottom = this.radarToWorld(maxRangeMeters, a, -halfElevationRad);
+
+      topLoop.push(top.x, top.y, top.z);
+      bottomLoop.push(bottom.x, bottom.y, bottom.z);
+
+      const nextA = ((i + 1) / segments) * Math.PI * 2;
+      const nextTop = this.radarToWorld(maxRangeMeters, nextA, halfElevationRad);
+      const nextBottom = this.radarToWorld(maxRangeMeters, nextA, -halfElevationRad);
+
+      surfaceVertices.push(
+        0,
+        0,
+        0,
+        top.x,
+        top.y,
+        top.z,
+        nextTop.x,
+        nextTop.y,
+        nextTop.z,
+      );
+
+      surfaceVertices.push(
+        0,
+        0,
+        0,
+        nextBottom.x,
+        nextBottom.y,
+        nextBottom.z,
+        bottom.x,
+        bottom.y,
+        bottom.z,
+      );
+    }
+
+    const surfaceGeometry = new THREE.BufferGeometry();
+    surfaceGeometry.setAttribute('position', new THREE.Float32BufferAttribute(surfaceVertices, 3));
+    surfaceGeometry.computeVertexNormals();
+    const surfaceMaterial = new THREE.MeshBasicMaterial({
+      color: '#88deff',
+      transparent: true,
+      opacity: 0.16,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    this.fullRegionVerticalSurface = new THREE.Mesh(surfaceGeometry, surfaceMaterial);
+    this.scene.add(this.fullRegionVerticalSurface);
+
+    const topLineGeometry = new THREE.BufferGeometry();
+    topLineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(topLoop, 3));
+    const bottomLineGeometry = new THREE.BufferGeometry();
+    bottomLineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(bottomLoop, 3));
+
+    const edgeMaterial = new THREE.LineBasicMaterial({
+      color: '#b8ebff',
+      transparent: true,
+      opacity: 0.45,
+    });
+
+    const topLoopLine = new THREE.LineLoop(topLineGeometry, edgeMaterial);
+    const bottomLoopLine = new THREE.LineLoop(bottomLineGeometry, edgeMaterial.clone());
+
+    this.fullRegionVerticalLines.push(topLoopLine, bottomLoopLine);
+    this.scene.add(topLoopLine, bottomLoopLine);
+  }
+
+  private applyDisplaySettings(): void {
+    if (this.scanRegionMesh) {
+      this.scanRegionMesh.visible = this.displaySettings.showFullRegion;
+    }
+
+    const showFullFaces =
+      this.displaySettings.showFullRegion && this.displaySettings.showFullRegionVerticalFaces;
+
+    if (this.fullRegionVerticalSurface) {
+      this.fullRegionVerticalSurface.visible = showFullFaces;
+    }
+    for (const line of this.fullRegionVerticalLines) {
+      line.visible = showFullFaces;
+    }
+
+    if (this.activeScanMesh) {
+      this.activeScanMesh.visible = this.displaySettings.showActiveSector;
+    }
+
+    const showActiveFaces =
+      this.displaySettings.showActiveSector && this.displaySettings.showActiveSectorVerticalFaces;
+    for (const mesh of this.activeBoundaryMeshes) {
+      mesh.visible = showActiveFaces;
+    }
+    for (const line of this.activeBoundaryLines) {
+      line.visible = showActiveFaces;
+    }
+  }
+
+  private radarToWorld(range: number, azimuthRad: number, elevationRad: number): THREE.Vector3 {
+    const cosElevation = Math.cos(elevationRad);
+    const x = Math.sin(azimuthRad) * cosElevation * range;
+    const y = Math.sin(elevationRad) * range;
+    const z = Math.cos(azimuthRad) * cosElevation * range;
+    return new THREE.Vector3(x, y, z);
   }
 
   private handlePointerDown = (event: PointerEvent): void => {
