@@ -5,11 +5,17 @@ import type { Detection, RadarParams } from '../core/types';
 
 const defaultRadarParams: RadarParams = {
   maxRangeMeters: 120000,
+  radarAltitudeMeters: 5000,
+  radarAzimuthDeg: 0,
   fovDeg: 8,
+  beamElevationDeg: 6,
+  scanLinesCount: 8,
+  autoBeamElevationByScanLines: true,
   elevationFovDeg: 40,
   scanSpeedDegPerSec: 120,
   azimuthScanSpanDeg: 360,
-  scanPattern: 'auto',
+  antennaTiltDeg: 0,
+  zoneAzimuthOffsetDeg: 0,
 };
 
 export const useRadarStore = defineStore('radar', () => {
@@ -27,11 +33,17 @@ export const useRadarStore = defineStore('radar', () => {
 
     params.value = {
       maxRangeMeters: clamp(merged.maxRangeMeters, 20000, 200000),
+      radarAltitudeMeters: clamp(merged.radarAltitudeMeters, -500, 25000),
+      radarAzimuthDeg: clamp(merged.radarAzimuthDeg, -180, 180),
       fovDeg: clamp(merged.fovDeg, 1, 40),
+      beamElevationDeg: clamp(merged.beamElevationDeg, 1, 45),
+      scanLinesCount: Math.round(clamp(merged.scanLinesCount, 1, 60)),
+      autoBeamElevationByScanLines: Boolean(merged.autoBeamElevationByScanLines),
       elevationFovDeg: clamp(merged.elevationFovDeg, 5, 90),
       scanSpeedDegPerSec: clamp(merged.scanSpeedDegPerSec, 20, 360),
       azimuthScanSpanDeg: clamp(merged.azimuthScanSpanDeg, 10, 360),
-      scanPattern: merged.scanPattern === 'raster' ? 'raster' : 'auto',
+      antennaTiltDeg: clamp(merged.antennaTiltDeg, -60, 60),
+      zoneAzimuthOffsetDeg: clamp(merged.zoneAzimuthOffsetDeg, -180, 180),
     };
   }
 

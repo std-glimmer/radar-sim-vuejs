@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
 
     <main class="sim-stage">
       <SimulationLayout>
-        <template #left>
+        <template #scene>
           <Scene3DPanel
             :targets="targets"
             :sweep-angle-rad="sweepAngleRad"
@@ -127,7 +127,11 @@ onBeforeUnmount(() => {
           />
         </template>
 
-        <template #right-top>
+        <template #controls>
+          <RadarParamsControls :params="params" @update="updateRadarParams" />
+        </template>
+
+        <template #side>
           <SideProjectionPanel
             :detections="detections"
             :params="params"
@@ -135,11 +139,8 @@ onBeforeUnmount(() => {
           />
         </template>
 
-        <template #right-bottom>
-          <div class="radar-widget">
-            <RadarParamsControls :params="params" @update="updateRadarParams" />
-            <RadarScopePanel :detections="detections" :params="params" :sweep-angle-rad="sweepAngleRad" />
-          </div>
+        <template #radar>
+          <RadarScopePanel :detections="detections" :params="params" :sweep-angle-rad="sweepAngleRad" />
         </template>
       </SimulationLayout>
     </main>
@@ -208,19 +209,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.radar-widget {
-  height: 100%;
-  display: flex;
-  gap: 8px;
-  padding: 8px;
-}
-
-.radar-widget > :last-child {
-  flex: 1;
-  min-width: 0;
-}
-
-.radar-widget :deep(.scope-canvas) {
+.sim-stage :deep(.scope-canvas) {
   border-radius: 8px;
 }
 
@@ -234,10 +223,6 @@ onBeforeUnmount(() => {
   .control-bar {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .radar-widget {
-    flex-direction: column;
   }
 }
 </style>

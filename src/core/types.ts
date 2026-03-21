@@ -4,15 +4,19 @@ export interface Vec3 {
   z: number;
 }
 
-export type ScanPattern = 'auto' | 'raster';
-
 export interface RadarParams {
   maxRangeMeters: number;
+  radarAltitudeMeters: number;
+  radarAzimuthDeg: number;
   fovDeg: number;
+  beamElevationDeg: number;
+  scanLinesCount: number;
+  autoBeamElevationByScanLines: boolean;
   elevationFovDeg: number;
   scanSpeedDegPerSec: number;
   azimuthScanSpanDeg: number;
-  scanPattern: ScanPattern;
+  antennaTiltDeg: number;
+  zoneAzimuthOffsetDeg: number;
 }
 
 export interface Target {
@@ -25,6 +29,7 @@ export interface Detection {
   targetId: string;
   distanceMeters: number;
   groundDistanceMeters: number;
+  relativeAltitudeMeters: number;
   bearingRad: number;
   elevationRad: number;
   strength: number;

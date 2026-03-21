@@ -39,7 +39,10 @@ export class ThreeSceneRenderer {
     maxRangeMeters: number;
     azimuthSpanDeg: number;
     azimuthFovDeg: number;
+    beamElevationDeg: number;
     elevationFovDeg: number;
+    antennaTiltDeg: number;
+    scanCenterAzimuthDeg: number;
   } | null = null;
   private readonly groundPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(400000, 400000),
@@ -123,7 +126,11 @@ export class ThreeSceneRenderer {
     const rangeMeters = Math.max(5000, params.maxRangeMeters);
     const azimuthSpanDeg = Math.max(10, Math.min(360, params.azimuthScanSpanDeg));
     const azimuthFovDeg = Math.max(1, params.fovDeg);
+    const effectiveBeamElevationDeg = this.getEffectiveBeamElevationDeg(params);
+    const beamElevationDeg = effectiveBeamElevationDeg;
     const elevationFovDeg = Math.max(5, params.elevationFovDeg);
+    const antennaTiltDeg = Math.max(-60, Math.min(60, params.antennaTiltDeg));
+    const scanCenterAzimuthDeg = params.radarAzimuthDeg + params.zoneAzimuthOffsetDeg;
 
     if (
       !this.scanRegionMesh ||
@@ -132,14 +139,26 @@ export class ThreeSceneRenderer {
       this.scanRegionParams.maxRangeMeters !== rangeMeters ||
       this.scanRegionParams.azimuthSpanDeg !== azimuthSpanDeg ||
       this.scanRegionParams.azimuthFovDeg !== azimuthFovDeg ||
-      this.scanRegionParams.elevationFovDeg !== elevationFovDeg
+      this.scanRegionParams.beamElevationDeg !== beamElevationDeg ||
+      this.scanRegionParams.elevationFovDeg !== elevationFovDeg ||
+      this.scanRegionParams.antennaTiltDeg !== antennaTiltDeg ||
+      this.scanRegionParams.scanCenterAzimuthDeg !== scanCenterAzimuthDeg
     ) {
-      this.rebuildScanRegionGeometry(rangeMeters, azimuthSpanDeg, azimuthFovDeg, elevationFovDeg);
+      this.rebuildScanRegionGeometry(
+        rangeMeters,
+        azimuthSpanDeg,
+        azimuthFovDeg,
+        beamElevationDeg,
+        elevationFovDeg,
+      );
       this.scanRegionParams = {
         maxRangeMeters: rangeMeters,
         azimuthSpanDeg,
         azimuthFovDeg,
+        beamElevationDeg,
         elevationFovDeg,
+        antennaTiltDeg,
+        scanCenterAzimuthDeg,
       };
     }
 
@@ -147,15 +166,29 @@ export class ThreeSceneRenderer {
       return;
     }
 
-    this.activeScanMesh.rotation.set(0, sweepAngleRad, 0);
+    const antennaTiltRad = (-antennaTiltDeg * Math.PI) / 180;
+    const antennaTiltAbsRad = (antennaTiltDeg * Math.PI) / 180;
+
+    this.activeScanMesh.rotation.set(antennaTiltRad, sweepAngleRad, 0);
     for (const mesh of this.activeBoundaryMeshes) {
-      mesh.rotation.set(0, sweepAngleRad, 0);
+      mesh.rotation.set(antennaTiltRad, sweepAngleRad, 0);
     }
     for (const line of this.activeBoundaryLines) {
-      line.rotation.set(0, sweepAngleRad, 0);
+      line.rotation.set(antennaTiltRad, sweepAngleRad, 0);
     }
 
-    const tiltRad = -sweepElevationRad;
+    const scanCenterAzimuthRad = (scanCenterAzimuthDeg * Math.PI) / 180;
+    if (this.scanRegionMesh) {
+      this.scanRegionMesh.rotation.set(antennaTiltRad, scanCenterAzimuthRad, 0);
+    }
+    if (this.fullRegionVerticalSurface) {
+      this.fullRegionVerticalSurface.rotation.set(antennaTiltRad, scanCenterAzimuthRad, 0);
+    }
+    for (const line of this.fullRegionVerticalLines) {
+      line.rotation.set(antennaTiltRad, scanCenterAzimuthRad, 0);
+    }
+
+    const tiltRad = -(sweepElevationRad - antennaTiltAbsRad);
     this.activeScanMesh.rotateX(tiltRad);
     for (const mesh of this.activeBoundaryMeshes) {
       mesh.rotateX(tiltRad);
@@ -211,6 +244,7 @@ export class ThreeSceneRenderer {
     maxRangeMeters: number,
     azimuthSpanDeg: number,
     azimuthFovDeg: number,
+    beamElevationDeg: number,
     elevationFovDeg: number,
   ): void {
     this.disposeScanMeshes();
@@ -245,8 +279,11 @@ export class ThreeSceneRenderer {
     this.scene.add(this.scanRegionMesh);
 
     const halfAzimuthRad = (azimuthFovDeg * Math.PI) / 360;
+    const halfBeamElevationRad = (beamElevationDeg * Math.PI) / 360;
     const activePhiStart = Math.PI / 2 - halfAzimuthRad;
     const activePhiLength = halfAzimuthRad * 2;
+    const activeThetaStart = Math.max(0.001, Math.PI / 2 - halfBeamElevationRad);
+    const activeThetaLength = Math.min(Math.PI - 0.002, halfBeamElevationRad * 2);
 
     const activeGeometry = new THREE.SphereGeometry(
       maxRangeMeters * 1.002,
@@ -254,8 +291,8 @@ export class ThreeSceneRenderer {
       18,
       activePhiStart,
       activePhiLength,
-      thetaStart,
-      thetaLength,
+      activeThetaStart,
+      activeThetaLength,
     );
 
     const activeMaterial = new THREE.MeshBasicMaterial({
@@ -270,7 +307,7 @@ export class ThreeSceneRenderer {
     this.scene.add(this.activeScanMesh);
 
     this.buildFullRegionVerticalFaces(maxRangeMeters, elevationFovDeg, fullPhiStart, fullPhiLength);
-    this.buildActiveBoundaryFaces(maxRangeMeters, azimuthFovDeg, elevationFovDeg);
+    this.buildActiveBoundaryFaces(maxRangeMeters, azimuthFovDeg, beamElevationDeg);
     this.applyDisplaySettings();
   }
 
@@ -321,10 +358,10 @@ export class ThreeSceneRenderer {
   private buildActiveBoundaryFaces(
     maxRangeMeters: number,
     azimuthFovDeg: number,
-    elevationFovDeg: number,
+    beamElevationDeg: number,
   ): void {
     const halfAzimuthRad = (azimuthFovDeg * Math.PI) / 360;
-    const halfElevationRad = (elevationFovDeg * Math.PI) / 360;
+    const halfElevationRad = (beamElevationDeg * Math.PI) / 360;
 
     for (const sign of [-1, 1] as const) {
       const azimuth = sign * halfAzimuthRad;
@@ -528,6 +565,21 @@ export class ThreeSceneRenderer {
     const y = Math.sin(elevationRad) * range;
     const z = Math.cos(azimuthRad) * cosElevation * range;
     return new THREE.Vector3(x, y, z);
+  }
+
+  private getEffectiveBeamElevationDeg(params: RadarParams): number {
+    const lines = Math.max(1, Math.round(params.scanLinesCount));
+    const zoneElevationDeg = Math.max(5, Math.min(90, params.elevationFovDeg));
+
+    if (lines === 1) {
+      return zoneElevationDeg;
+    }
+
+    if (params.autoBeamElevationByScanLines) {
+      return Math.max(1, Math.min(45, zoneElevationDeg / lines));
+    }
+
+    return Math.max(1, Math.min(45, params.beamElevationDeg));
   }
 
   private handlePointerDown = (event: PointerEvent): void => {
