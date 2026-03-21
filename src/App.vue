@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia';
 import { onBeforeUnmount, onMounted } from 'vue';
+import RadarParamsControls from './components/controls/RadarParamsControls.vue';
 import TargetForm from './components/controls/TargetForm.vue';
 import SimulationLayout from './components/layout/SimulationLayout.vue';
 import RadarScopePanel from './components/panels/RadarScopePanel.vue';
 import Scene3DPanel from './components/panels/Scene3DPanel.vue';
 import SideProjectionPanel from './components/panels/SideProjectionPanel.vue';
 import { SimulationRuntime } from './core/simulationRuntime';
-import type { NewTargetInput } from './core/types';
+import type { NewTargetInput, RadarParams } from './core/types';
 import { useRadarStore } from './stores/radarStore';
 import { useSimStore } from './stores/simStore';
 import { useTargetsStore } from './stores/targetsStore';
@@ -63,6 +64,10 @@ function toggleRunState(): void {
   simStore.setRunning(!isRunning.value);
 }
 
+function updateRadarParams(nextParams: Partial<RadarParams>): void {
+  radarStore.updateParams(nextParams);
+}
+
 onMounted(() => {
   addTarget({
     position: { x: -28000, y: 3200, z: 76000 },
@@ -101,6 +106,7 @@ onBeforeUnmount(() => {
     </header>
 
     <TargetForm @submit="addTarget" />
+  <RadarParamsControls :params="params" @update="updateRadarParams" />
 
     <section class="targets-panel">
       <div v-for="target in targets" :key="target.id" class="target-item">

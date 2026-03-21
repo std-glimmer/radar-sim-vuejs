@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
+import { clamp } from '../core/math';
 import type { Detection, RadarParams } from '../core/types';
 
 const defaultRadarParams: RadarParams = {
@@ -16,9 +17,16 @@ export const useRadarStore = defineStore('radar', () => {
   const simTimeSec = ref(0);
 
   function updateParams(nextParams: Partial<RadarParams>): void {
-    params.value = {
+    const merged: RadarParams = {
       ...params.value,
       ...nextParams,
+    };
+
+    params.value = {
+      maxRangeMeters: clamp(merged.maxRangeMeters, 20000, 200000),
+      fovDeg: clamp(merged.fovDeg, 1, 40),
+      elevationFovDeg: clamp(merged.elevationFovDeg, 5, 90),
+      scanSpeedDegPerSec: clamp(merged.scanSpeedDegPerSec, 20, 360),
     };
   }
 
