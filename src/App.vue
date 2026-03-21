@@ -8,7 +8,15 @@ import RadarScopePanel from './components/panels/RadarScopePanel.vue';
 import Scene3DPanel from './components/panels/Scene3DPanel.vue';
 import SideProjectionPanel from './components/panels/SideProjectionPanel.vue';
 import { SimulationRuntime } from './core/simulationRuntime';
-import type { NewTargetInput, RadarCursorState, RadarParams, RadarScopeMode } from './core/types';
+import type {
+  Mig29RadarMode,
+  Mig29ZonePosition,
+  NewTargetInput,
+  RadarControlMode,
+  RadarCursorState,
+  RadarParams,
+  RadarScopeMode,
+} from './core/types';
 import { useRadarStore } from './stores/radarStore';
 import { useSimStore } from './stores/simStore';
 import { useTargetsStore } from './stores/targetsStore';
@@ -22,8 +30,32 @@ const { targets, count } = storeToRefs(targetsStore);
 const { isRunning } = storeToRefs(simStore);
 const cursorRangeMeters = ref(params.value.maxRangeMeters * 0.5);
 const cursorAzimuthOffsetRad = ref(0);
-const showRadarBeam = ref(true);
+const showRadarBeam = ref(false);
+const showRadarGrid = ref(false);
 const scopeMode = ref<RadarScopeMode>('ppi');
+const controlMode = ref<RadarControlMode>('mig29');
+const mig29RadarMode = ref<Mig29RadarMode>('auto');
+const mig29DeltaH = ref(0);
+const mig29ZonePosition = ref<Mig29ZonePosition>('center');
+const manualParamsSnapshot = ref<RadarParams | null>(null);
+const migBaseCursorWidth = ref(params.value.cursorWidthMeters);
+const migBaseCursorLength = ref(params.value.cursorLengthMeters);
+
+const effectiveScopeMode = computed<RadarScopeMode>(() =>
+  controlMode.value === 'mig29' ? 'b-scope' : scopeMode.value,
+);
+
+const mig29RangeTickKm = computed<number>(() => {
+  if (mig29RadarMode.value === 'v') {
+    return 30;
+  }
+
+  if (mig29RadarMode.value === 'd') {
+    return 10;
+  }
+
+  return 20;
+});
 
 const cursor = computed<RadarCursorState>(() => {
   const clampedOffset = clampCursorAzimuthOffset(cursorAzimuthOffsetRad.value, params.value.azimuthScanSpanDeg);
@@ -97,8 +129,92 @@ function updateRadarBeamVisibility(nextVisible: boolean): void {
   showRadarBeam.value = nextVisible;
 }
 
+function updateRadarGridVisibility(nextVisible: boolean): void {
+  showRadarGrid.value = nextVisible;
+}
+
 function updateScopeMode(nextMode: RadarScopeMode): void {
+  if (controlMode.value === 'mig29') {
+    return;
+  }
+
   scopeMode.value = nextMode;
+}
+
+function updateControlMode(nextMode: RadarControlMode): void {
+  if (nextMode === controlMode.value) {
+    return;
+  }
+
+  if (nextMode === 'mig29') {
+    manualParamsSnapshot.value = { ...params.value };
+    migBaseCursorWidth.value = params.value.cursorWidthMeters;
+    migBaseCursorLength.value = params.value.cursorLengthMeters;
+    controlMode.value = 'mig29';
+    applyMig29Params();
+    return;
+  }
+
+  controlMode.value = 'manual';
+  if (manualParamsSnapshot.value) {
+    radarStore.updateParams(manualParamsSnapshot.value);
+  }
+}
+
+function updateMig29RadarMode(nextMode: Mig29RadarMode): void {
+  const rangeNorm = cursorRangeMeters.value / Math.max(1, params.value.maxRangeMeters);
+  mig29RadarMode.value = nextMode;
+
+  const nextMaxRangeMeters = nextMode === 'v' ? 150000 : nextMode === 'd' ? 50000 : 100000;
+  cursorRangeMeters.value = clampNumber(rangeNorm * nextMaxRangeMeters, 0, nextMaxRangeMeters);
+}
+
+function updateMig29DeltaH(nextValue: number): void {
+  mig29DeltaH.value = nextValue;
+}
+
+function updateMig29ZonePosition(nextPosition: Mig29ZonePosition): void {
+  mig29ZonePosition.value = nextPosition;
+}
+
+function applyMig29Params(): void {
+  if (controlMode.value !== 'mig29') {
+    return;
+  }
+
+  const mode = mig29RadarMode.value;
+  const cursorRangeKm = Math.max(1, cursor.value.rangeMeters / 1000);
+  const cursorRangeThresholdMeters = 20000;
+
+  const rangeKm = mode === 'v' ? 150 : mode === 'd' ? 50 : 100;
+  const zoneAzOffsetDeg =
+    mig29ZonePosition.value === 'left' ? -40 : mig29ZonePosition.value === 'right' ? 40 : 0;
+
+  let elevationFovDeg = 11;
+  if (mode === 'd') {
+    elevationFovDeg = cursor.value.rangeMeters > cursorRangeThresholdMeters ? 13 : 16;
+  } else {
+    elevationFovDeg = cursor.value.rangeMeters > cursorRangeThresholdMeters ? 11 : 13;
+  }
+
+  const antennaTiltDeg = clampNumber((mig29DeltaH.value / cursorRangeKm) * 57.3, -60, 60);
+  const cursorWidthMeters = mode === 'v' ? migBaseCursorWidth.value : migBaseCursorWidth.value;
+  const cursorLengthMeters = mode === 'v' ? migBaseCursorLength.value * 0.5 : migBaseCursorLength.value;
+
+  radarStore.updateParams({
+    maxRangeMeters: rangeKm * 1000,
+    scanSpeedDegPerSec: 50,
+    fovDeg: 3.5,
+    beamElevationDeg: 3.5,
+    scanLinesCount: 4,
+    autoBeamElevationByScanLines: false,
+    azimuthScanSpanDeg: 50,
+    elevationFovDeg,
+    antennaTiltDeg,
+    zoneAzimuthOffsetDeg: zoneAzOffsetDeg,
+    cursorWidthMeters,
+    cursorLengthMeters,
+  });
 }
 
 function handleCursorKeydown(event: KeyboardEvent): void {
@@ -193,6 +309,7 @@ onMounted(() => {
 
   runtime.start();
   window.addEventListener('keydown', handleCursorKeydown);
+  applyMig29Params();
 });
 
 watch(
@@ -205,6 +322,11 @@ watch(
     );
   },
   { deep: true },
+);
+
+watch(
+  () => [controlMode.value, mig29RadarMode.value, mig29DeltaH.value, mig29ZonePosition.value, cursor.value.rangeMeters],
+  () => applyMig29Params(),
 );
 
 onBeforeUnmount(() => {
@@ -254,8 +376,16 @@ onBeforeUnmount(() => {
           <RadarParamsControls
             :params="params"
             :scope-mode="scopeMode"
+            :control-mode="controlMode"
+            :mig29-radar-mode="mig29RadarMode"
+            :mig29-delta-h="mig29DeltaH"
+            :mig29-zone-position="mig29ZonePosition"
             @update="updateRadarParams"
             @update-scope-mode="updateScopeMode"
+            @update-control-mode="updateControlMode"
+            @update-mig29-radar-mode="updateMig29RadarMode"
+            @update-mig29-delta-h="updateMig29DeltaH"
+            @update-mig29-zone-position="updateMig29ZonePosition"
           />
         </template>
 
@@ -276,9 +406,15 @@ onBeforeUnmount(() => {
             :sweep-elevation-rad="sweepElevationRad"
             :cursor="cursor"
             :show-beam="showRadarBeam"
-            :scope-mode="scopeMode"
+            :show-grid="showRadarGrid"
+            :scope-mode="effectiveScopeMode"
+            :control-mode="controlMode"
+            :mig29-radar-mode="mig29RadarMode"
+            :mig29-zone-position="mig29ZonePosition"
+            :mig29-range-tick-km="mig29RangeTickKm"
             @update-cursor="updateCursorFromAbsolute"
             @update-beam-visibility="updateRadarBeamVisibility"
+            @update-grid-visibility="updateRadarGridVisibility"
           />
         </template>
       </SimulationLayout>

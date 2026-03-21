@@ -44,6 +44,12 @@ export interface RadarCursorState {
 
 export type RadarScopeMode = 'ppi' | 'b-scope';
 
+export type RadarControlMode = 'manual' | 'mig29';
+
+export type Mig29RadarMode = 'auto' | 'v' | 'd';
+
+export type Mig29ZonePosition = 'left' | 'center' | 'right';
+
 export interface SimulationFrame {
   simTimeSec: number;
   sweepAngleRad: number;

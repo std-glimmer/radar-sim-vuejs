@@ -1,17 +1,33 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { ref } from 'vue';
-import type { RadarParams, RadarScopeMode } from '../../core/types';
+import type {
+  Mig29RadarMode,
+  Mig29ZonePosition,
+  RadarControlMode,
+  RadarParams,
+  RadarScopeMode,
+} from '../../core/types';
 
 const props = defineProps<{
   params: RadarParams;
   scopeMode: RadarScopeMode;
+  controlMode: RadarControlMode;
+  mig29RadarMode: Mig29RadarMode;
+  mig29DeltaH: number;
+  mig29ZonePosition: Mig29ZonePosition;
 }>();
 
 const emit = defineEmits<{
   update: [payload: Partial<RadarParams>];
   updateScopeMode: [payload: RadarScopeMode];
+  updateControlMode: [payload: RadarControlMode];
+  updateMig29RadarMode: [payload: Mig29RadarMode];
+  updateMig29DeltaH: [payload: number];
+  updateMig29ZonePosition: [payload: Mig29ZonePosition];
 }>();
+
+const mig29DeltaHOptions = [-6, -4, -2, -1, 0, 1, 2, 4, 6, 8, 10];
 
 type RadarProfileId = 'mig29-9-12' | 'circular-surveillance';
 
@@ -26,6 +42,7 @@ const radarProfiles: RadarProfilePreset[] = [
     id: 'mig29-9-12',
     name: 'MiG-29 9-12',
     params: {
+      scanSpeedDegPerSec: 50,
       fovDeg: 3.5,
       beamElevationDeg: 3.5,
       scanLinesCount: 4,
@@ -95,6 +112,91 @@ const effectiveBeamElevationDeg = computed(() => {
 
 <template>
   <section class="radar-params">
+    <div class="param-group">
+      <h3>Radar Mode</h3>
+
+      <div class="param-item">
+        <label for="control-mode">Configuration mode</label>
+        <div class="control-row profile-row">
+          <select
+            id="control-mode"
+            :value="props.controlMode"
+            @change="emit('updateControlMode', ($event.target as HTMLSelectElement).value as RadarControlMode)"
+          >
+            <option value="mig29">MiG-29</option>
+            <option value="manual">Manual setup</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <template v-if="props.controlMode === 'mig29'">
+      <div class="param-group">
+        <h3>MiG-29 Controls</h3>
+
+        <div class="param-item">
+          <label for="mig29-radar-mode">Radar mode</label>
+          <div class="control-row profile-row">
+            <select
+              id="mig29-radar-mode"
+              :value="props.mig29RadarMode"
+              @change="emit('updateMig29RadarMode', ($event.target as HTMLSelectElement).value as Mig29RadarMode)"
+            >
+              <option value="auto">Avt.</option>
+              <option value="v">V</option>
+              <option value="d">D</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="param-item">
+          <label for="mig29-delta-h">Delta H</label>
+          <div class="control-row profile-row">
+            <select
+              id="mig29-delta-h"
+              :value="props.mig29DeltaH"
+              @change="emit('updateMig29DeltaH', Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option v-for="value in mig29DeltaHOptions" :key="value" :value="value">
+                {{ value }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div class="param-item">
+          <label>Zone</label>
+          <div class="toggle-row">
+            <button
+              type="button"
+              class="zone-button"
+              :class="{ active: props.mig29ZonePosition === 'left' }"
+              @click="emit('updateMig29ZonePosition', 'left')"
+            >
+              &lt;- 
+            </button>
+            <button
+              type="button"
+              class="zone-button"
+              :class="{ active: props.mig29ZonePosition === 'center' }"
+              @click="emit('updateMig29ZonePosition', 'center')"
+            >
+              Center
+            </button>
+            <button
+              type="button"
+              class="zone-button"
+              :class="{ active: props.mig29ZonePosition === 'right' }"
+              @click="emit('updateMig29ZonePosition', 'right')"
+            >
+              -&gt;
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template v-else>
     <div class="param-group">
       <h3>Radar Scope</h3>
 
@@ -459,6 +561,7 @@ const effectiveBeamElevationDeg = computed(() => {
         </div>
       </div>
     </div>
+    </template>
   </section>
 </template>
 
@@ -563,6 +666,27 @@ select {
   border-radius: 6px;
   padding: 4px 10px;
   cursor: pointer;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 6px;
+}
+
+.zone-button {
+  flex: 1;
+  border: 1px solid rgba(145, 183, 212, 0.4);
+  background: rgba(6, 14, 23, 0.86);
+  color: #d8ebff;
+  border-radius: 6px;
+  padding: 5px 6px;
+  cursor: pointer;
+}
+
+.zone-button.active {
+  border-color: rgba(125, 238, 173, 0.75);
+  background: rgba(16, 45, 29, 0.9);
+  color: #cfffdf;
 }
 
 @media (max-width: 1280px) {
