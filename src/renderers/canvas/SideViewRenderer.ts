@@ -1,5 +1,8 @@
 import type { Detection, RadarCursorState, RadarParams, Target } from '../../core/types';
 
+const SIDE_VIEW_MIN_ALTITUDE_METERS = 0;
+const SIDE_VIEW_MAX_ALTITUDE_METERS = 20000;
+
 export class SideViewRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -33,14 +36,17 @@ export class SideViewRenderer {
     cursor: RadarCursorState | null,
     showRadarAircraft: boolean,
     hoveredTargetId: string | null,
-    inZoneTargetIds: string[],
+    inFovTargetIds: string[],
+    rangeAzimuthOnlyTargetIds: string[],
+    outOfAzimuthInRangeTargetIds: string[],
+    outOfRangeTargetIds: string[],
   ): void {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
     const pad = 28;
     const plotW = width - pad * 2;
     const plotH = height - pad * 2;
-    const scale = this.buildAltitudeScale(params);
+    const scale = this.buildAltitudeScale();
 
     this.ctx.clearRect(0, 0, width, height);
     this.drawBackground(width, height);
@@ -56,7 +62,10 @@ export class SideViewRenderer {
     }
 
     const detectedIds = new Set(detections.map((detection) => detection.targetId));
-    const inZoneIdSet = new Set(inZoneTargetIds);
+    const inFovIdSet = new Set(inFovTargetIds);
+    const rangeAzimuthOnlyIdSet = new Set(rangeAzimuthOnlyTargetIds);
+    const outOfAzimuthInRangeIdSet = new Set(outOfAzimuthInRangeTargetIds);
+    const outOfRangeIdSet = new Set(outOfRangeTargetIds);
     this.projectedTargets = [];
 
     for (const target of targets) {
@@ -69,21 +78,34 @@ export class SideViewRenderer {
       const y = this.altitudeToPlotY(target.position.y, plotH, scale);
       const isDetected = detectedIds.has(target.id);
       const isHovered = hoveredTargetId === target.id;
-      const isInZone = inZoneIdSet.has(target.id);
+      const isInFov = inFovIdSet.has(target.id);
+      const isRangeAzimuthOnly = rangeAzimuthOnlyIdSet.has(target.id);
+      const isOutAzimuthInRange = outOfAzimuthInRangeIdSet.has(target.id);
+      const isOutOfRange = outOfRangeIdSet.has(target.id);
 
       this.projectedTargets.push({ id: target.id, x: pad + x, y: pad + y });
 
-      let fillStyle = 'rgba(244, 215, 96, 0.88)';
-      if (isInZone) {
-        fillStyle = 'rgba(255, 158, 158, 0.92)';
-      }
-      if (isDetected) {
-        fillStyle = 'rgba(255, 255, 255, 0.98)';
+      let fillStyle = 'rgba(255, 138, 138, 0.9)';
+      if (isInFov) {
+        fillStyle = 'rgba(255, 98, 98, 0.95)';
+      } else if (isRangeAzimuthOnly) {
+        fillStyle = 'rgba(241, 208, 97, 0.94)';
+      } else if (isOutAzimuthInRange) {
+        fillStyle = 'rgba(103, 216, 143, 0.92)';
+      } else if (isOutOfRange) {
+        fillStyle = 'rgba(174, 183, 194, 0.9)';
       }
 
-      const radius = isHovered ? 4.2 : 3;
+      const radius = isHovered ? 4.2 : isDetected ? 3.2 : 3;
       this.ctx.fillStyle = fillStyle;
-      if (isInZone) {
+      if (isInFov) {
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, y - radius - 1.8);
+        this.ctx.lineTo(x + radius + 1.8, y + radius + 1.8);
+        this.ctx.lineTo(x - radius - 1.8, y + radius + 1.8);
+        this.ctx.closePath();
+        this.ctx.fill();
+      } else if (isRangeAzimuthOnly) {
         const side = radius * 2;
         this.ctx.fillRect(x - side * 0.5, y - side * 0.5, side, side);
       } else {
@@ -92,7 +114,7 @@ export class SideViewRenderer {
         this.ctx.fill();
       }
 
-      if (isInZone && !isDetected) {
+      if (isRangeAzimuthOnly) {
         this.ctx.strokeStyle = 'rgba(255, 176, 176, 0.9)';
         this.ctx.lineWidth = 1;
         const side = radius * 2 + 3;
@@ -102,9 +124,16 @@ export class SideViewRenderer {
       if (isHovered) {
         this.ctx.strokeStyle = 'rgba(255, 232, 200, 0.95)';
         this.ctx.lineWidth = 1;
-        if (isInZone) {
+        if (isRangeAzimuthOnly) {
           const hoverSide = radius * 2 + 5;
           this.ctx.strokeRect(x - hoverSide * 0.5, y - hoverSide * 0.5, hoverSide, hoverSide);
+        } else if (isInFov) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, y - radius - 3.5);
+          this.ctx.lineTo(x + radius + 3.5, y + radius + 3.5);
+          this.ctx.lineTo(x - radius - 3.5, y + radius + 3.5);
+          this.ctx.closePath();
+          this.ctx.stroke();
         } else {
           this.ctx.beginPath();
           this.ctx.arc(x, y, radius + 2, 0, Math.PI * 2);
@@ -193,16 +222,16 @@ export class SideViewRenderer {
     sweepElevationRad: number,
     scale: { min: number; max: number },
   ): void {
-    const antennaTiltRad = (params.antennaTiltDeg * Math.PI) / 180;
+    const antennaTiltRad = (Math.max(-60, Math.min(60, params.antennaTiltDeg)) * Math.PI) / 180;
     const halfZoneElevRad = (params.elevationFovDeg * Math.PI) / 360;
     const effectiveBeamElevationDeg = this.getEffectiveBeamElevationDeg(params);
     const halfBeamElevRad = (effectiveBeamElevationDeg * Math.PI) / 360;
     const originX = 0;
-    const originY = plotH * 0.5;
+    const originY = this.altitudeToPlotY(params.radarAltitudeMeters, plotH, scale, false);
     const farX = plotW;
 
-    const yTop = this.angleToPlotY(antennaTiltRad + halfZoneElevRad, params, plotH, scale);
-    const yBottom = this.angleToPlotY(antennaTiltRad - halfZoneElevRad, params, plotH, scale);
+    const yTop = this.angleToPlotY(antennaTiltRad + halfZoneElevRad, params, plotH, scale, false);
+    const yBottom = this.angleToPlotY(antennaTiltRad - halfZoneElevRad, params, plotH, scale, false);
 
     this.ctx.save();
     this.ctx.fillStyle = 'rgba(128, 209, 255, 0.12)';
@@ -222,8 +251,8 @@ export class SideViewRenderer {
     this.ctx.lineTo(farX, yBottom);
     this.ctx.stroke();
 
-    const activeTop = this.angleToPlotY(sweepElevationRad + halfBeamElevRad, params, plotH, scale);
-    const activeBottom = this.angleToPlotY(sweepElevationRad - halfBeamElevRad, params, plotH, scale);
+    const activeTop = this.angleToPlotY(sweepElevationRad + halfBeamElevRad, params, plotH, scale, false);
+    const activeBottom = this.angleToPlotY(sweepElevationRad - halfBeamElevRad, params, plotH, scale, false);
 
     this.ctx.fillStyle = 'rgba(120, 255, 202, 0.22)';
     this.ctx.beginPath();
@@ -241,35 +270,32 @@ export class SideViewRenderer {
     params: RadarParams,
     plotH: number,
     scale: { min: number; max: number },
+    clampToPlot = true,
   ): number {
     const clampedElevation = Math.max((-80 * Math.PI) / 180, Math.min((80 * Math.PI) / 180, elevationRad));
     const altitude = params.radarAltitudeMeters + Math.tan(clampedElevation) * params.maxRangeMeters;
-    return this.altitudeToPlotY(altitude, plotH, scale);
+    return this.altitudeToPlotY(altitude, plotH, scale, clampToPlot);
   }
 
-  private altitudeToPlotY(altitude: number, plotH: number, scale: { min: number; max: number }): number {
+  private altitudeToPlotY(
+    altitude: number,
+    plotH: number,
+    scale: { min: number; max: number },
+    clampToPlot = true,
+  ): number {
     const span = Math.max(1, scale.max - scale.min);
     const yNorm = (scale.max - altitude) / span;
-    return Math.max(0, Math.min(plotH, yNorm * plotH));
+    const y = yNorm * plotH;
+    if (!clampToPlot) {
+      return y;
+    }
+    return Math.max(0, Math.min(plotH, y));
   }
 
-  private buildAltitudeScale(params: RadarParams): { min: number; max: number } {
-    const halfZoneElevRad = (params.elevationFovDeg * Math.PI) / 360;
-    const antennaTiltRad = (params.antennaTiltDeg * Math.PI) / 180;
-
-    const topAngle = Math.max((-80 * Math.PI) / 180, Math.min((80 * Math.PI) / 180, antennaTiltRad + halfZoneElevRad));
-    const bottomAngle = Math.max((-80 * Math.PI) / 180, Math.min((80 * Math.PI) / 180, antennaTiltRad - halfZoneElevRad));
-
-    const topAlt = params.radarAltitudeMeters + Math.tan(topAngle) * params.maxRangeMeters;
-    const bottomAlt = params.radarAltitudeMeters + Math.tan(bottomAngle) * params.maxRangeMeters;
-
-    const min = Math.min(topAlt, bottomAlt);
-    const max = Math.max(topAlt, bottomAlt);
-    const padding = (max - min) * 0.08 + 200;
-
+  private buildAltitudeScale(): { min: number; max: number } {
     return {
-      min: min - padding,
-      max: max + padding,
+      min: SIDE_VIEW_MIN_ALTITUDE_METERS,
+      max: SIDE_VIEW_MAX_ALTITUDE_METERS,
     };
   }
 
@@ -336,7 +362,7 @@ export class SideViewRenderer {
     this.ctx.fillText('altitude', pad + 8, pad + 14);
 
     const xTicks = 4;
-    for (let i = 0; i <= xTicks; i += 1) {
+    for (let i = 1; i <= xTicks; i += 1) {
       const ratio = i / xTicks;
       const x = pad + (width - pad * 2) * ratio;
       const rangeKm = ((maxRangeMeters * ratio) / 1000).toFixed(0);
@@ -351,7 +377,7 @@ export class SideViewRenderer {
     }
 
     const yTicks = 4;
-    for (let i = 0; i <= yTicks; i += 1) {
+    for (let i = 0; i < yTicks; i += 1) {
       const ratio = i / yTicks;
       const y = pad + (height - pad * 2) * ratio;
       const altitude = altitudeScale.max - (altitudeScale.max - altitudeScale.min) * ratio;

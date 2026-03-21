@@ -12,7 +12,10 @@ const props = defineProps<{
   cursor: RadarCursorState | null;
   controlMode: RadarControlMode;
   hoveredTargetId: string | null;
-  inZoneTargetIds: string[];
+  inFovTargetIds: string[];
+  rangeAzimuthOnlyTargetIds: string[];
+  outOfAzimuthInRangeTargetIds: string[];
+  outOfRangeTargetIds: string[];
 }>();
 
 const emit = defineEmits<{
@@ -68,7 +71,13 @@ onMounted(() => {
   });
   renderer.syncTargets(props.targets);
   renderer.updateDetectionFlashes(props.detections);
-  renderer.setTargetHighlights(props.hoveredTargetId, props.inZoneTargetIds);
+  renderer.setTargetHighlights(
+    props.hoveredTargetId,
+    props.inFovTargetIds,
+    props.rangeAzimuthOnlyTargetIds,
+    props.outOfAzimuthInRangeTargetIds,
+    props.outOfRangeTargetIds,
+  );
   renderer.setDisplaySettings(displaySettings);
   renderer.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
   renderer.updateCursor(props.cursor, props.params);
@@ -98,8 +107,21 @@ watch(
 );
 
 watch(
-  () => [props.hoveredTargetId, props.inZoneTargetIds],
-  () => renderer?.setTargetHighlights(props.hoveredTargetId, props.inZoneTargetIds),
+  () => [
+    props.hoveredTargetId,
+    props.inFovTargetIds,
+    props.rangeAzimuthOnlyTargetIds,
+    props.outOfAzimuthInRangeTargetIds,
+    props.outOfRangeTargetIds,
+  ],
+  () =>
+    renderer?.setTargetHighlights(
+      props.hoveredTargetId,
+      props.inFovTargetIds,
+      props.rangeAzimuthOnlyTargetIds,
+      props.outOfAzimuthInRangeTargetIds,
+      props.outOfRangeTargetIds,
+    ),
   { deep: true },
 );
 
@@ -148,6 +170,28 @@ onBeforeUnmount(() => {
 <template>
   <div class="scene-shell">
     <div ref="hostRef" class="scene-host"></div>
+
+    <section class="legend-panel panel-block">
+      <h3>Legend</h3>
+      <div class="legend-list">
+        <div class="legend-row">
+          <span class="legend-icon pyramid-red" aria-hidden="true"></span>
+          <span>Red pyramid: in field of view</span>
+        </div>
+        <div class="legend-row">
+          <span class="legend-icon cube-yellow" aria-hidden="true"></span>
+          <span>Yellow cube: range + azimuth, out by elevation</span>
+        </div>
+        <div class="legend-row">
+          <span class="legend-icon sphere-green" aria-hidden="true"></span>
+          <span>Green sphere: out by azimuth, in range</span>
+        </div>
+        <div class="legend-row">
+          <span class="legend-icon sphere-gray" aria-hidden="true"></span>
+          <span>Gray sphere: out of current range</span>
+        </div>
+      </div>
+    </section>
 
     <section class="display-panel panel-block">
         <h3>Display</h3>
@@ -216,6 +260,69 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.legend-panel {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.legend-panel h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9fc7e6;
+}
+
+.legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.legend-row {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: #d7e8f8;
+}
+
+.legend-icon {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+}
+
+.pyramid-red {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid #ff6464;
+}
+
+.cube-yellow {
+  background: #f1d061;
+  border: 1px solid rgba(255, 240, 188, 0.7);
+}
+
+.sphere-green {
+  background: #67d88f;
+  border-radius: 50%;
+}
+
+.sphere-gray {
+  background: #aeb7c2;
+  border-radius: 50%;
+}
+
 .display-panel h3 {
   margin: 0 0 2px;
   font-size: 12px;
@@ -243,6 +350,11 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 980px) {
+  .legend-panel {
+    width: min(280px, calc(100% - 20px));
+    font-size: 10px;
+  }
+
   .display-panel {
     min-width: 180px;
     font-size: 11px;

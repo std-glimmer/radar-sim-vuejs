@@ -7,7 +7,10 @@ const props = defineProps<{
   detections: Detection[];
   params: RadarParams;
   hoveredTargetId: string | null;
-  inZoneTargetIds: string[];
+  inFovTargetIds: string[];
+  rangeAzimuthOnlyTargetIds: string[];
+  outOfAzimuthInRangeTargetIds: string[];
+  outOfRangeTargetIds: string[];
 }>();
 
 const emit = defineEmits<{
@@ -84,8 +87,10 @@ function submitTarget(): void {
           class="target-row"
           :class="{
             'is-hovered': props.hoveredTargetId === target.id,
-            'is-in-zone': props.inZoneTargetIds.includes(target.id),
-            'is-out-zone': !props.inZoneTargetIds.includes(target.id),
+            'is-in-fov': props.inFovTargetIds.includes(target.id),
+            'is-range-azimuth-only': props.rangeAzimuthOnlyTargetIds.includes(target.id),
+            'is-out-azimuth-in-range': props.outOfAzimuthInRangeTargetIds.includes(target.id),
+            'is-out-of-range': props.outOfRangeTargetIds.includes(target.id),
             'is-detected': detectedTargetIds.has(target.id),
           }"
           @mouseenter="emit('hoverTarget', target.id)"
@@ -187,16 +192,28 @@ function submitTarget(): void {
   padding: 2px 4px;
 }
 
-.target-row.is-in-zone {
-  border-color: rgba(255, 170, 170, 0.5);
-  background: rgba(120, 34, 34, 0.44);
-  color: #ffdede;
+.target-row.is-out-azimuth-in-range {
+  border-color: rgba(113, 220, 147, 0.5);
+  background: rgba(24, 78, 41, 0.45);
+  color: #c7ffd5;
 }
 
-.target-row.is-out-zone {
-  border-color: rgba(230, 205, 112, 0.42);
-  background: rgba(85, 74, 25, 0.4);
-  color: #ffefb5;
+.target-row.is-range-azimuth-only {
+  border-color: rgba(233, 214, 130, 0.5);
+  background: rgba(96, 79, 29, 0.45);
+  color: #ffefb2;
+}
+
+.target-row.is-in-fov {
+  border-color: rgba(255, 142, 142, 0.6);
+  background: rgba(128, 37, 37, 0.5);
+  color: #ffd6d6;
+}
+
+.target-row.is-out-of-range {
+  border-color: rgba(169, 178, 190, 0.45);
+  background: rgba(72, 79, 88, 0.45);
+  color: #d5dce4;
 }
 
 .target-row.is-detected {

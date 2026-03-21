@@ -60,8 +60,40 @@ const mig29RangeTickKm = computed<number>(() => {
   return 20;
 });
 
-const inZoneTargetIds = computed<string[]>(() =>
-  targets.value.filter((target) => isTargetInScanZone(target, params.value)).map((target) => target.id),
+const inFovTargetIds = computed<string[]>(() =>
+  targets.value
+    .filter((target) => {
+      const state = classifyTargetForScan(target, params.value);
+      return state.inRange && state.inAzimuth && state.inElevation;
+    })
+    .map((target) => target.id),
+);
+
+const rangeAzimuthOnlyTargetIds = computed<string[]>(() =>
+  targets.value
+    .filter((target) => {
+      const state = classifyTargetForScan(target, params.value);
+      return state.inRange && state.inAzimuth && !state.inElevation;
+    })
+    .map((target) => target.id),
+);
+
+const outOfAzimuthInRangeTargetIds = computed<string[]>(() =>
+  targets.value
+    .filter((target) => {
+      const state = classifyTargetForScan(target, params.value);
+      return state.inRange && !state.inAzimuth;
+    })
+    .map((target) => target.id),
+);
+
+const outOfRangeTargetIds = computed<string[]>(() =>
+  targets.value
+    .filter((target) => {
+      const state = classifyTargetForScan(target, params.value);
+      return !state.inRange;
+    })
+    .map((target) => target.id),
 );
 
 const cursor = computed<RadarCursorState>(() => {
@@ -121,16 +153,29 @@ function addTargetFromPolar(input: { azimuthOffsetDeg: number; rangeKm: number; 
 
 function buildFixedMig29Targets(): NewTargetInput[] {
   const points = [
-    { rangeKm: 22, azDeg: -48, altitude: 2800 },
-    { rangeKm: 28, azDeg: -18, altitude: 4200 },
-    { rangeKm: 34, azDeg: 12, altitude: 5200 },
-    { rangeKm: 41, azDeg: 38, altitude: 3600 },
-    { rangeKm: 56, azDeg: -52, altitude: 6100 },
-    { rangeKm: 63, azDeg: -6, altitude: 7400 },
-    { rangeKm: 78, azDeg: 24, altitude: 4500 },
-    { rangeKm: 96, azDeg: 55, altitude: 8800 },
-    { rangeKm: 118, azDeg: -33, altitude: 6900 },
-    { rangeKm: 142, azDeg: 47, altitude: 10200 },
+    { rangeKm: 18, azDeg: -58, altitude: 900 },
+    { rangeKm: 22, azDeg: -34, altitude: 2400 },
+    { rangeKm: 27, azDeg: -10, altitude: 4100 },
+    { rangeKm: 32, azDeg: 16, altitude: 6200 },
+    { rangeKm: 38, azDeg: 42, altitude: 1700 },
+
+    { rangeKm: 46, azDeg: -54, altitude: 5200 },
+    { rangeKm: 52, azDeg: -26, altitude: 7600 },
+    { rangeKm: 58, azDeg: 2, altitude: 9800 },
+    { rangeKm: 66, azDeg: 24, altitude: 3200 },
+    { rangeKm: 74, azDeg: 50, altitude: 11800 },
+
+    { rangeKm: 84, azDeg: -60, altitude: 14000 },
+    { rangeKm: 92, azDeg: -38, altitude: 10800 },
+    { rangeKm: 101, azDeg: -14, altitude: 4300 },
+    { rangeKm: 110, azDeg: 12, altitude: 8600 },
+    { rangeKm: 122, azDeg: 36, altitude: 15200 },
+
+    { rangeKm: 134, azDeg: 58, altitude: 6700 },
+    { rangeKm: 145, azDeg: -48, altitude: 12800 },
+    { rangeKm: 156, azDeg: -4, altitude: 18200 },
+    { rangeKm: 168, azDeg: 30, altitude: 5400 },
+    { rangeKm: 178, azDeg: 54, altitude: 19600 },
   ];
 
   return points.map((point) => {
@@ -349,7 +394,10 @@ function clampCursorAzimuthOffset(offsetRad: number, scanSpanDeg: number): numbe
   return clampNumber(normalizedOffset, -halfSpanRad, halfSpanRad);
 }
 
-function isTargetInScanZone(target: Target, radarParams: RadarParams): boolean {
+function classifyTargetForScan(
+  target: Target,
+  radarParams: RadarParams,
+): { inRange: boolean; inAzimuth: boolean; inElevation: boolean } {
   const centerAzimuthRad = normalizePositiveAngleRad(
     ((clamp(radarParams.radarAzimuthDeg, -180, 180) + clamp(radarParams.zoneAzimuthOffsetDeg, -180, 180)) * Math.PI) / 180,
   );
@@ -364,19 +412,21 @@ function isTargetInScanZone(target: Target, radarParams: RadarParams): boolean {
   const targetBearingRad = bearingRad(relativePosition);
   const azimuthOffset = Math.abs(shortestAngleDiffRadCore(targetBearingRad, centerAzimuthRad));
   const inAzimuth = azimuthOffset <= halfAzimuthSpan + 1e-6;
-  if (!inAzimuth) {
-    return false;
-  }
 
   const rangeMeters = magnitude(relativePosition);
-  if (rangeMeters > radarParams.maxRangeMeters + 1e-6) {
-    return false;
-  }
+  const inRange = rangeMeters <= radarParams.maxRangeMeters + 1e-6;
 
   const targetElevationRad = elevationRad(relativePosition);
   const antennaTiltRad = (clamp(radarParams.antennaTiltDeg, -60, 60) * Math.PI) / 180;
   const halfElevationSpan = (clamp(radarParams.elevationFovDeg, 5, 90) * Math.PI) / 360;
-  return Math.abs(shortestAngleDiffRadCore(targetElevationRad, antennaTiltRad)) <= halfElevationSpan + 1e-6;
+  const inElevation =
+    Math.abs(shortestAngleDiffRadCore(targetElevationRad, antennaTiltRad)) <= halfElevationSpan + 1e-6;
+
+  return {
+    inRange,
+    inAzimuth,
+    inElevation,
+  };
 }
 
 onMounted(() => {
@@ -434,7 +484,10 @@ onBeforeUnmount(() => {
               :detections="detections"
               :params="params"
               :hovered-target-id="hoveredTargetId"
-              :in-zone-target-ids="inZoneTargetIds"
+              :in-fov-target-ids="inFovTargetIds"
+              :range-azimuth-only-target-ids="rangeAzimuthOnlyTargetIds"
+              :out-of-azimuth-in-range-target-ids="outOfAzimuthInRangeTargetIds"
+              :out-of-range-target-ids="outOfRangeTargetIds"
               @add-target-polar="addTargetFromPolar"
               @remove-target="removeTarget"
               @hover-target="updateHoveredTarget"
@@ -449,7 +502,10 @@ onBeforeUnmount(() => {
               :cursor="cursor"
               :control-mode="controlMode"
               :hovered-target-id="hoveredTargetId"
-              :in-zone-target-ids="inZoneTargetIds"
+              :in-fov-target-ids="inFovTargetIds"
+              :range-azimuth-only-target-ids="rangeAzimuthOnlyTargetIds"
+              :out-of-azimuth-in-range-target-ids="outOfAzimuthInRangeTargetIds"
+              :out-of-range-target-ids="outOfRangeTargetIds"
               @add-from-scene="addTargetFromScene"
               @hover-target="updateHoveredTarget"
             />
@@ -482,7 +538,10 @@ onBeforeUnmount(() => {
             :cursor="cursor"
             :control-mode="controlMode"
             :hovered-target-id="hoveredTargetId"
-            :in-zone-target-ids="inZoneTargetIds"
+            :in-fov-target-ids="inFovTargetIds"
+            :range-azimuth-only-target-ids="rangeAzimuthOnlyTargetIds"
+            :out-of-azimuth-in-range-target-ids="outOfAzimuthInRangeTargetIds"
+            :out-of-range-target-ids="outOfRangeTargetIds"
             @hover-target="updateHoveredTarget"
           />
         </template>

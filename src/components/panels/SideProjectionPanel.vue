@@ -11,7 +11,10 @@ const props = defineProps<{
   cursor: RadarCursorState | null;
   controlMode: RadarControlMode;
   hoveredTargetId: string | null;
-  inZoneTargetIds: string[];
+  inFovTargetIds: string[];
+  rangeAzimuthOnlyTargetIds: string[];
+  outOfAzimuthInRangeTargetIds: string[];
+  outOfRangeTargetIds: string[];
 }>();
 
 const emit = defineEmits<{
@@ -30,7 +33,10 @@ function redraw(): void {
     props.cursor,
     props.controlMode === 'mig29',
     props.hoveredTargetId,
-    props.inZoneTargetIds,
+    props.inFovTargetIds,
+    props.rangeAzimuthOnlyTargetIds,
+    props.outOfAzimuthInRangeTargetIds,
+    props.outOfRangeTargetIds,
   );
 }
 
@@ -75,7 +81,10 @@ watch(
     props.cursor,
     props.controlMode,
     props.hoveredTargetId,
-    props.inZoneTargetIds,
+    props.inFovTargetIds,
+    props.rangeAzimuthOnlyTargetIds,
+    props.outOfAzimuthInRangeTargetIds,
+    props.outOfRangeTargetIds,
   ],
   redraw,
   { deep: true },
