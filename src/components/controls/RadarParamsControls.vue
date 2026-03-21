@@ -17,6 +17,11 @@ function emitNumericUpdate<K extends keyof RadarParams>(key: K, raw: string): vo
 
   emit('update', { [key]: value } as Partial<RadarParams>);
 }
+
+function emitPatternUpdate(raw: string): void {
+  const pattern = raw === 'raster' ? 'raster' : 'auto';
+  emit('update', { scanPattern: pattern });
+}
 </script>
 
 <template>
@@ -112,6 +117,43 @@ function emitNumericUpdate<K extends keyof RadarParams>(key: K, raw: string): vo
         />
       </div>
     </div>
+
+    <div class="param-item">
+      <label for="scan-span">Azimuth zone (deg)</label>
+      <div class="control-row">
+        <input
+          id="scan-span"
+          type="range"
+          min="10"
+          max="360"
+          step="5"
+          :value="props.params.azimuthScanSpanDeg"
+          @input="emitNumericUpdate('azimuthScanSpanDeg', ($event.target as HTMLInputElement).value)"
+        />
+        <input
+          type="number"
+          min="10"
+          max="360"
+          step="5"
+          :value="props.params.azimuthScanSpanDeg"
+          @input="emitNumericUpdate('azimuthScanSpanDeg', ($event.target as HTMLInputElement).value)"
+        />
+      </div>
+    </div>
+
+    <div class="param-item">
+      <label for="scan-pattern">Scan pattern</label>
+      <div class="control-row">
+        <select
+          id="scan-pattern"
+          :value="props.params.scanPattern"
+          @change="emitPatternUpdate(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="auto">Auto (360 circle / sector ping-pong)</option>
+          <option value="raster">Raster (top-left to bottom-right)</option>
+        </select>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -157,6 +199,15 @@ input[type='number'] {
   color: #d8ebff;
   border-radius: 6px;
   padding: 4px 6px;
+}
+
+select {
+  width: 100%;
+  border: 1px solid rgba(145, 183, 212, 0.4);
+  background: rgba(6, 14, 23, 0.86);
+  color: #d8ebff;
+  border-radius: 6px;
+  padding: 5px 6px;
 }
 
 @media (max-width: 1280px) {

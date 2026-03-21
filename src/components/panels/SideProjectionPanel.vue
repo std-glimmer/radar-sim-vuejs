@@ -6,13 +6,14 @@ import { SideViewRenderer } from '../../renderers/canvas/SideViewRenderer';
 const props = defineProps<{
   detections: Detection[];
   params: RadarParams;
+  sweepElevationRad: number;
 }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let renderer: SideViewRenderer | null = null;
 
 function redraw(): void {
-  renderer?.render(props.detections, props.params);
+  renderer?.render(props.detections, props.params, props.sweepElevationRad);
 }
 
 function onResize(): void {
@@ -33,7 +34,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [props.detections, props.params],
+  () => [props.detections, props.params, props.sweepElevationRad],
   redraw,
   { deep: true },
 );

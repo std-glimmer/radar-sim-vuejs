@@ -17,7 +17,7 @@ const radarStore = useRadarStore();
 const simStore = useSimStore();
 const targetsStore = useTargetsStore();
 
-const { params, detections, sweepAngleRad, simTimeSec } = storeToRefs(radarStore);
+const { params, detections, sweepAngleRad, sweepElevationRad, simTimeSec } = storeToRefs(radarStore);
 const { targets, count } = storeToRefs(targetsStore);
 const { isRunning } = storeToRefs(simStore);
 
@@ -29,6 +29,7 @@ const runtime = new SimulationRuntime({
     radarStore.commitFrame({
       simTimeSec: frame.simTimeSec,
       sweepAngleRad: frame.sweepAngleRad,
+      sweepElevationRad: frame.sweepElevationRad,
       detections: frame.detections,
     });
   },
@@ -120,13 +121,18 @@ onBeforeUnmount(() => {
           <Scene3DPanel
             :targets="targets"
             :sweep-angle-rad="sweepAngleRad"
+            :sweep-elevation-rad="sweepElevationRad"
             :params="params"
             @add-from-scene="addTargetFromScene"
           />
         </template>
 
         <template #right-top>
-          <SideProjectionPanel :detections="detections" :params="params" />
+          <SideProjectionPanel
+            :detections="detections"
+            :params="params"
+            :sweep-elevation-rad="sweepElevationRad"
+          />
         </template>
 
         <template #right-bottom>

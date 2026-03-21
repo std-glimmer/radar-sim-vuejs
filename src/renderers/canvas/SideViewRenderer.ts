@@ -24,7 +24,7 @@ export class SideViewRenderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  render(detections: Detection[], params: RadarParams): void {
+  render(detections: Detection[], params: RadarParams, sweepElevationRad: number): void {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
     const pad = 28;
@@ -38,7 +38,7 @@ export class SideViewRenderer {
     this.ctx.save();
     this.ctx.translate(pad, pad);
 
-    this.drawScanCone(plotW, plotH, params);
+    this.drawScanCone(plotW, plotH, params, sweepElevationRad);
 
     for (const detection of detections) {
       const x = (detection.groundDistanceMeters / params.maxRangeMeters) * plotW;
@@ -55,7 +55,12 @@ export class SideViewRenderer {
     this.ctx.restore();
   }
 
-  private drawScanCone(plotW: number, plotH: number, params: RadarParams): void {
+  private drawScanCone(
+    plotW: number,
+    plotH: number,
+    params: RadarParams,
+    sweepElevationRad: number,
+  ): void {
     const halfElevRad = (params.elevationFovDeg * Math.PI) / 360;
     const originX = 0;
     const originY = plotH * 0.5;
@@ -81,6 +86,24 @@ export class SideViewRenderer {
     this.ctx.moveTo(originX, originY);
     this.ctx.lineTo(farX, yBottom);
     this.ctx.stroke();
+
+    if (params.scanPattern === 'raster' && params.azimuthScanSpanDeg < 359.9) {
+      const beamHalfRad = Math.max(
+        (1 * Math.PI) / 180,
+        ((Math.max(2, params.elevationFovDeg / 6) * Math.PI) / 180) * 0.5,
+      );
+      const activeTop = this.elevationToCanvasY(sweepElevationRad + beamHalfRad, plotH);
+      const activeBottom = this.elevationToCanvasY(sweepElevationRad - beamHalfRad, plotH);
+
+      this.ctx.fillStyle = 'rgba(120, 255, 202, 0.22)';
+      this.ctx.beginPath();
+      this.ctx.moveTo(originX, originY);
+      this.ctx.lineTo(farX, activeTop);
+      this.ctx.lineTo(farX, activeBottom);
+      this.ctx.closePath();
+      this.ctx.fill();
+    }
+
     this.ctx.restore();
   }
 

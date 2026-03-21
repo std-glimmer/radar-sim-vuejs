@@ -25,7 +25,7 @@ export class ThreeSceneRenderer {
   private readonly targetMeshes = new Map<string, THREE.Mesh>();
   private scanRegionMesh: THREE.Mesh | null = null;
   private fullRegionVerticalSurface: THREE.Mesh | null = null;
-  private readonly fullRegionVerticalLines: THREE.LineLoop[] = [];
+  private readonly fullRegionVerticalLines: THREE.Line[] = [];
   private activeScanMesh: THREE.Mesh | null = null;
   private readonly activeBoundaryMeshes: THREE.Mesh[] = [];
   private readonly activeBoundaryLines: THREE.LineSegments[] = [];
@@ -37,6 +37,7 @@ export class ThreeSceneRenderer {
   };
   private scanRegionParams: {
     maxRangeMeters: number;
+    azimuthSpanDeg: number;
     azimuthFovDeg: number;
     elevationFovDeg: number;
   } | null = null;
@@ -118,8 +119,9 @@ export class ThreeSceneRenderer {
     this.controls.update();
   }
 
-  updateScanCone(sweepAngleRad: number, params: RadarParams): void {
+  updateScanCone(sweepAngleRad: number, sweepElevationRad: number, params: RadarParams): void {
     const rangeMeters = Math.max(5000, params.maxRangeMeters);
+    const azimuthSpanDeg = Math.max(10, Math.min(360, params.azimuthScanSpanDeg));
     const azimuthFovDeg = Math.max(1, params.fovDeg);
     const elevationFovDeg = Math.max(5, params.elevationFovDeg);
 
@@ -128,12 +130,14 @@ export class ThreeSceneRenderer {
       !this.activeScanMesh ||
       !this.scanRegionParams ||
       this.scanRegionParams.maxRangeMeters !== rangeMeters ||
+      this.scanRegionParams.azimuthSpanDeg !== azimuthSpanDeg ||
       this.scanRegionParams.azimuthFovDeg !== azimuthFovDeg ||
       this.scanRegionParams.elevationFovDeg !== elevationFovDeg
     ) {
-      this.rebuildScanRegionGeometry(rangeMeters, azimuthFovDeg, elevationFovDeg);
+      this.rebuildScanRegionGeometry(rangeMeters, azimuthSpanDeg, azimuthFovDeg, elevationFovDeg);
       this.scanRegionParams = {
         maxRangeMeters: rangeMeters,
+        azimuthSpanDeg,
         azimuthFovDeg,
         elevationFovDeg,
       };
@@ -149,6 +153,15 @@ export class ThreeSceneRenderer {
     }
     for (const line of this.activeBoundaryLines) {
       line.rotation.set(0, sweepAngleRad, 0);
+    }
+
+    const tiltRad = -sweepElevationRad;
+    this.activeScanMesh.rotateX(tiltRad);
+    for (const mesh of this.activeBoundaryMeshes) {
+      mesh.rotateX(tiltRad);
+    }
+    for (const line of this.activeBoundaryLines) {
+      line.rotateX(tiltRad);
     }
   }
 
@@ -196,12 +209,17 @@ export class ThreeSceneRenderer {
 
   private rebuildScanRegionGeometry(
     maxRangeMeters: number,
+    azimuthSpanDeg: number,
     azimuthFovDeg: number,
     elevationFovDeg: number,
   ): void {
     this.disposeScanMeshes();
 
     const halfElevationRad = (elevationFovDeg * Math.PI) / 360;
+    const spanRad = (Math.max(10, Math.min(360, azimuthSpanDeg)) * Math.PI) / 180;
+    const isFullAzimuth = spanRad >= Math.PI * 1.999;
+    const fullPhiStart = isFullAzimuth ? 0 : Math.PI / 2 - spanRad * 0.5;
+    const fullPhiLength = isFullAzimuth ? Math.PI * 2 : spanRad;
     const thetaStart = Math.max(0.001, Math.PI / 2 - halfElevationRad);
     const thetaLength = Math.min(Math.PI - 0.002, halfElevationRad * 2);
 
@@ -209,8 +227,8 @@ export class ThreeSceneRenderer {
       maxRangeMeters,
       64,
       24,
-      0,
-      Math.PI * 2,
+      fullPhiStart,
+      fullPhiLength,
       thetaStart,
       thetaLength,
     );
@@ -251,7 +269,7 @@ export class ThreeSceneRenderer {
     this.activeScanMesh = new THREE.Mesh(activeGeometry, activeMaterial);
     this.scene.add(this.activeScanMesh);
 
-    this.buildFullRegionVerticalFaces(maxRangeMeters, elevationFovDeg);
+    this.buildFullRegionVerticalFaces(maxRangeMeters, elevationFovDeg, fullPhiStart, fullPhiLength);
     this.buildActiveBoundaryFaces(maxRangeMeters, azimuthFovDeg, elevationFovDeg);
     this.applyDisplaySettings();
   }
@@ -386,7 +404,12 @@ export class ThreeSceneRenderer {
     }
   }
 
-  private buildFullRegionVerticalFaces(maxRangeMeters: number, elevationFovDeg: number): void {
+  private buildFullRegionVerticalFaces(
+    maxRangeMeters: number,
+    elevationFovDeg: number,
+    phiStart: number,
+    phiLength: number,
+  ): void {
     const halfElevationRad = (elevationFovDeg * Math.PI) / 360;
     const segments = FULL_REGION_VERTICAL_DENSITY;
 
@@ -395,16 +418,18 @@ export class ThreeSceneRenderer {
     const bottomLoop: number[] = [];
 
     for (let i = 0; i < segments; i += 1) {
-      const a = (i / segments) * Math.PI * 2;
-      const top = this.radarToWorld(maxRangeMeters, a, halfElevationRad);
-      const bottom = this.radarToWorld(maxRangeMeters, a, -halfElevationRad);
+      const phi = phiStart + (i / segments) * phiLength;
+      const azimuth = Math.PI / 2 - phi;
+      const top = this.radarToWorld(maxRangeMeters, azimuth, halfElevationRad);
+      const bottom = this.radarToWorld(maxRangeMeters, azimuth, -halfElevationRad);
 
       topLoop.push(top.x, top.y, top.z);
       bottomLoop.push(bottom.x, bottom.y, bottom.z);
 
-      const nextA = ((i + 1) / segments) * Math.PI * 2;
-      const nextTop = this.radarToWorld(maxRangeMeters, nextA, halfElevationRad);
-      const nextBottom = this.radarToWorld(maxRangeMeters, nextA, -halfElevationRad);
+      const nextPhi = phiStart + ((i + 1) / segments) * phiLength;
+      const nextAzimuth = Math.PI / 2 - nextPhi;
+      const nextTop = this.radarToWorld(maxRangeMeters, nextAzimuth, halfElevationRad);
+      const nextBottom = this.radarToWorld(maxRangeMeters, nextAzimuth, -halfElevationRad);
 
       surfaceVertices.push(
         0,
@@ -456,8 +481,13 @@ export class ThreeSceneRenderer {
       opacity: 0.45,
     });
 
-    const topLoopLine = new THREE.LineLoop(topLineGeometry, edgeMaterial);
-    const bottomLoopLine = new THREE.LineLoop(bottomLineGeometry, edgeMaterial.clone());
+    const isFullAzimuth = phiLength >= Math.PI * 1.999;
+    const topLoopLine = isFullAzimuth
+      ? new THREE.LineLoop(topLineGeometry, edgeMaterial)
+      : new THREE.Line(topLineGeometry, edgeMaterial);
+    const bottomLoopLine = isFullAzimuth
+      ? new THREE.LineLoop(bottomLineGeometry, edgeMaterial.clone())
+      : new THREE.Line(bottomLineGeometry, edgeMaterial.clone());
 
     this.fullRegionVerticalLines.push(topLoopLine, bottomLoopLine);
     this.scene.add(topLoopLine, bottomLoopLine);

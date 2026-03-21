@@ -6,6 +6,7 @@ import { ThreeSceneRenderer } from '../../renderers/three/ThreeSceneRenderer';
 const props = defineProps<{
   targets: Target[];
   sweepAngleRad: number;
+  sweepElevationRad: number;
   params: RadarParams;
 }>();
 
@@ -42,7 +43,7 @@ onMounted(() => {
   });
   renderer.syncTargets(props.targets);
   renderer.setDisplaySettings(displaySettings);
-  renderer.updateScanCone(props.sweepAngleRad, props.params);
+  renderer.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
 
   window.addEventListener('resize', onResize);
 
@@ -61,8 +62,8 @@ watch(
 );
 
 watch(
-  () => [props.sweepAngleRad, props.params],
-  () => renderer?.updateScanCone(props.sweepAngleRad, props.params),
+  () => [props.sweepAngleRad, props.sweepElevationRad, props.params],
+  () => renderer?.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params),
   { deep: true },
 );
 
