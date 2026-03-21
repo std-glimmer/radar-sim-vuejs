@@ -22,6 +22,7 @@ export class RadarCanvasRenderer {
   private readonly bScopeLineMarks = new Map<number, Map<string, BScopeContactMark>>();
   private readonly bScopeLineVisits = new Map<number, number>();
   private bScopeLastLine: number | null = null;
+  private bScopeLastCenterAzRad: number | null = null;
   private bScopeSignature = '';
 
   constructor(canvas: HTMLCanvasElement) {
@@ -140,6 +141,12 @@ export class RadarCanvasRenderer {
     const spanDeg = Math.max(10, Math.min(360, params.azimuthScanSpanDeg));
     const spanRad = spanDeg >= 359.9 ? Math.PI * 2 : (spanDeg * Math.PI) / 180;
     const centerAz = this.getScanCenterAzimuthRad(params);
+    const azimuthMovingThresholdRad = (0.02 * Math.PI) / 180;
+    const isCenterAzimuthMoving =
+      this.bScopeLastCenterAzRad !== null
+      && Math.abs(this.shortestAngleDiffRad(centerAz, this.bScopeLastCenterAzRad)) > azimuthMovingThresholdRad;
+    this.bScopeLastCenterAzRad = centerAz;
+
     const scanLine = this.computeCurrentScanLine(params, sweepElevationRad);
     const nextSignature = [
       Math.round(params.maxRangeMeters),
@@ -153,7 +160,12 @@ export class RadarCanvasRenderer {
       this.bScopeLineMarks.clear();
       this.bScopeLineVisits.clear();
       this.bScopeLastLine = null;
+      this.bScopeLastCenterAzRad = centerAz;
       this.bScopeSignature = nextSignature;
+    }
+
+    if (isCenterAzimuthMoving) {
+      this.bScopeLineMarks.clear();
     }
 
     if (this.bScopeLastLine !== scanLine) {
@@ -243,12 +255,13 @@ export class RadarCanvasRenderer {
       const alpha = 0.3 + detection.strength * 0.7;
       const cursorWidthPx = Math.max(6, (params.cursorWidthMeters / Math.max(1, params.maxRangeMeters)) * plotW);
       const dashLen = Math.max(3, (cursorWidthPx * 0.85) / 1.5);
+      const persistPasses = isCenterAzimuthMoving ? 1 : 2;
       lineMarks.set(detection.targetId, {
         x,
         y,
         alpha,
         dashLen,
-        expiresAtVisit: currentLineVisit + 2,
+        expiresAtVisit: currentLineVisit + persistPasses,
       });
     }
 
