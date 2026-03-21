@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { ref } from 'vue';
 import type { RadarParams } from '../../core/types';
 
 const props = defineProps<{
@@ -9,6 +10,43 @@ const props = defineProps<{
 const emit = defineEmits<{
   update: [payload: Partial<RadarParams>];
 }>();
+
+type RadarProfileId = 'mig29-9-12' | 'circular-surveillance';
+
+interface RadarProfilePreset {
+  id: RadarProfileId;
+  name: string;
+  params: Partial<RadarParams>;
+}
+
+const radarProfiles: RadarProfilePreset[] = [
+  {
+    id: 'mig29-9-12',
+    name: 'MiG-29 9-12',
+    params: {
+      fovDeg: 3.5,
+      beamElevationDeg: 3.5,
+      scanLinesCount: 4,
+      azimuthScanSpanDeg: 50,
+      elevationFovDeg: 11,
+      autoBeamElevationByScanLines: false,
+    },
+  },
+  {
+    id: 'circular-surveillance',
+    name: 'Radar Circular Surveillance',
+    params: {
+      azimuthScanSpanDeg: 360,
+      elevationFovDeg: 60,
+      fovDeg: 3.5,
+      beamElevationDeg: 3.5,
+      scanLinesCount: 1,
+      autoBeamElevationByScanLines: true,
+    },
+  },
+];
+
+const selectedProfileId = ref<RadarProfileId>('mig29-9-12');
 
 function emitNumericUpdate<K extends keyof RadarParams>(key: K, raw: string): void {
   const value = Number(raw);
@@ -26,6 +64,15 @@ function emitRangeKmUpdate(raw: string): void {
   }
 
   emit('update', { maxRangeMeters: valueKm * 1000 });
+}
+
+function applySelectedProfile(): void {
+  const profile = radarProfiles.find((item) => item.id === selectedProfileId.value);
+  if (!profile) {
+    return;
+  }
+
+  emit('update', profile.params);
 }
 
 const effectiveBeamElevationDeg = computed(() => {
@@ -46,6 +93,22 @@ const effectiveBeamElevationDeg = computed(() => {
 
 <template>
   <section class="radar-params">
+    <div class="param-group">
+      <h3>Profiles</h3>
+
+      <div class="param-item">
+        <label for="profile-select">Preset profile</label>
+        <div class="control-row profile-row">
+          <select id="profile-select" v-model="selectedProfileId">
+            <option v-for="profile in radarProfiles" :key="profile.id" :value="profile.id">
+              {{ profile.name }}
+            </option>
+          </select>
+          <button type="button" class="apply-button" @click="applySelectedProfile">Apply</button>
+        </div>
+      </div>
+    </div>
+
     <div class="param-group">
       <h3>Radar Positioning</h3>
 
@@ -412,6 +475,28 @@ input[type='number'] {
   margin: 2px 0 0;
   color: rgba(193, 216, 238, 0.78);
   font-size: 11px;
+}
+
+.profile-row {
+  align-items: stretch;
+}
+
+select {
+  flex: 1;
+  border: 1px solid rgba(145, 183, 212, 0.4);
+  background: rgba(6, 14, 23, 0.86);
+  color: #d8ebff;
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.apply-button {
+  border: 1px solid rgba(145, 201, 246, 0.4);
+  background: rgba(29, 51, 73, 0.8);
+  color: #e9f4ff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
 }
 
 @media (max-width: 1280px) {
