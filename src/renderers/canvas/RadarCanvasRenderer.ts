@@ -17,6 +17,9 @@ interface BScopeContactMark {
 }
 
 export class RadarCanvasRenderer {
+  private static readonly MIG29_CURSOR_WIDTH_PX = 56;
+  private static readonly MIG29_CURSOR_BASE_HEIGHT_PX = 40;
+
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly bScopeLineMarks = new Map<number, Map<string, BScopeContactMark>>();
@@ -141,6 +144,7 @@ export class RadarCanvasRenderer {
     const spanDeg = Math.max(10, Math.min(360, params.azimuthScanSpanDeg));
     const spanRad = spanDeg >= 359.9 ? Math.PI * 2 : (spanDeg * Math.PI) / 180;
     const centerAz = this.getScanCenterAzimuthRad(params);
+    const cursorSizePx = this.getBScopeCursorSizePx(controlMode, mig29RadarMode, params, plotW, plotH);
     const azimuthMovingThresholdRad = (0.02 * Math.PI) / 180;
     const isCenterAzimuthMoving =
       this.bScopeLastCenterAzRad !== null
@@ -253,8 +257,7 @@ export class RadarCanvasRenderer {
       const x = ((rel / spanRad) + 0.5) * plotW;
       const y = (1 - detection.distanceMeters / Math.max(1, params.maxRangeMeters)) * plotH;
       const alpha = 0.3 + detection.strength * 0.7;
-      const cursorWidthPx = Math.max(6, (params.cursorWidthMeters / Math.max(1, params.maxRangeMeters)) * plotW);
-      const dashLen = Math.max(3, (cursorWidthPx * 0.85) / 1.5);
+      const dashLen = cursorSizePx.width * 0.5;
       const persistPasses = isCenterAzimuthMoving ? 1 : 2;
       lineMarks.set(detection.targetId, {
         x,
@@ -266,15 +269,19 @@ export class RadarCanvasRenderer {
     }
 
     this.ctx.save();
-    this.ctx.lineWidth = 2;
-    this.ctx.setLineDash([3, 2]);
     for (const marksByTarget of this.bScopeLineMarks.values()) {
       for (const mark of marksByTarget.values()) {
-        this.ctx.strokeStyle = `rgba(196, 255, 216, ${mark.alpha})`;
+        const leftX = mark.x - mark.dashLen * 0.25;
+        const centerX = mark.x;
+        const rightX = mark.x + mark.dashLen * 0.25;
+        const dotRadius = Math.max(0.9, mark.dashLen * 0.06);
+        this.ctx.fillStyle = `rgba(196, 255, 216, ${mark.alpha})`;
+
         this.ctx.beginPath();
-        this.ctx.moveTo(mark.x - mark.dashLen * 0.5, mark.y);
-        this.ctx.lineTo(mark.x + mark.dashLen * 0.5, mark.y);
-        this.ctx.stroke();
+        this.ctx.arc(leftX, mark.y, dotRadius, 0, Math.PI * 2);
+        this.ctx.arc(centerX, mark.y, dotRadius, 0, Math.PI * 2);
+        this.ctx.arc(rightX, mark.y, dotRadius, 0, Math.PI * 2);
+        this.ctx.fill();
       }
     }
     this.ctx.restore();
@@ -283,17 +290,10 @@ export class RadarCanvasRenderer {
       const rel = this.shortestAngleDiffRad(cursor.azimuthRad, centerAz);
       const rawX = ((rel / spanRad) + 0.5) * plotW;
       const rawY = (1 - cursor.rangeMeters / Math.max(1, params.maxRangeMeters)) * plotH;
-      const widthPx = Math.max(6, (params.cursorWidthMeters / Math.max(1, params.maxRangeMeters)) * plotW);
-      const lengthPx = Math.max(6, (params.cursorLengthMeters / Math.max(1, params.maxRangeMeters)) * plotH);
 
       this.ctx.strokeStyle = 'rgba(151, 255, 186, 1)';
       this.ctx.lineWidth = 1.5;
-      let drawWidth = widthPx;
-      let drawHeight = lengthPx;
-      if (controlMode === 'mig29' && mig29RadarMode === 'v') {
-        drawWidth = widthPx * 0.5;
-        drawHeight = Math.max(5, lengthPx * 0.35);
-      }
+      const { width: drawWidth, height: drawHeight } = cursorSizePx;
       const halfW = drawWidth * 0.5;
       const halfH = drawHeight * 0.5;
       const x = Math.max(halfW, Math.min(plotW - halfW, rawX));
@@ -310,7 +310,7 @@ export class RadarCanvasRenderer {
       this.drawMig29ZoneIndicator(offsetX, offsetY, squareSize, mig29ZonePosition);
       this.drawCompassScale(offsetX, offsetY, squareSize, centerAz);
       this.drawMig29RlLabel(offsetX, offsetY, squareSize, params.maxRangeMeters, mig29RangeTickKm);
-      this.drawMig29SpatialIndicator(offsetX, offsetY, squareSize, params, mig29RadarMode);
+      this.drawMig29SpatialIndicator(offsetX, offsetY, squareSize, params);
     }
 
     this.drawIndicators(width, height, params, sweepElevationRad, {
@@ -464,28 +464,21 @@ export class RadarCanvasRenderer {
     offsetY: number,
     squareSize: number,
     params: RadarParams,
-    mig29RadarMode: Mig29RadarMode,
   ): void {
-    if (mig29RadarMode !== 'auto') {
-      return;
-    }
-
-    const maxKm = Math.max(1, params.maxRangeMeters / 1000);
     const centerX = offsetX + squareSize * 0.5;
     const centerY = offsetY + squareSize * 0.5;
-    const y75 = offsetY + squareSize * (1 - 75 / maxKm);
-    const y60 = offsetY + squareSize * (1 - 60 / maxKm);
-    const yTop = Math.min(y75, y60);
-    const yBottom = Math.max(y75, y60);
+    // Keep center vertical line in Auto-like geometry for all modes.
+    const yTop = offsetY + squareSize * 0.25;
+    const yBottom = offsetY + squareSize * 0.4;
     const lineY = centerY;
-    const halfCursorWidthPx = Math.max(3, (params.cursorWidthMeters / Math.max(1, params.maxRangeMeters)) * squareSize * 0.5);
-    const halfCursorHeightPx = Math.max(3, (params.cursorLengthMeters / Math.max(1, params.maxRangeMeters)) * squareSize * 0.5);
+    // Keep aircraft spatial indicator stable for all MiG-29 modes.
+    const halfWingStartPx = squareSize * 0.0675;
     const delta15DegPx = (Math.min(15, params.azimuthScanSpanDeg * 0.5) / Math.max(1, params.azimuthScanSpanDeg)) * squareSize;
-    const rightStartX = centerX + halfCursorWidthPx;
-    const leftStartX = centerX - halfCursorWidthPx;
+    const rightStartX = centerX + halfWingStartPx;
+    const leftStartX = centerX - halfWingStartPx;
     const rightEndX = centerX + delta15DegPx;
     const leftEndX = centerX - delta15DegPx;
-    const tickLen = Math.max(3, halfCursorHeightPx);
+    const tickLen = Math.max(3, squareSize * 0.045);
 
     this.ctx.save();
     this.ctx.strokeStyle = 'rgba(121, 255, 180, 0.95)';
@@ -508,7 +501,40 @@ export class RadarCanvasRenderer {
     this.ctx.lineTo(leftTickX, lineY + tickLen);
 
     this.ctx.stroke();
+
     this.ctx.restore();
+  }
+
+  private getBScopeCursorSizePx(
+    controlMode: RadarControlMode,
+    mig29RadarMode: Mig29RadarMode,
+    params: RadarParams,
+    plotW: number,
+    plotH: number,
+  ): { width: number; height: number } {
+    if (controlMode === 'mig29') {
+      return this.getFixedMig29CursorSize(mig29RadarMode);
+    }
+
+    return {
+      width: Math.max(6, (params.cursorWidthMeters / Math.max(1, params.maxRangeMeters)) * plotW),
+      height: Math.max(6, (params.cursorLengthMeters / Math.max(1, params.maxRangeMeters)) * plotH),
+    };
+  }
+
+  private getFixedMig29CursorSize(mode: Mig29RadarMode): { width: number; height: number } {
+    const width = RadarCanvasRenderer.MIG29_CURSOR_WIDTH_PX;
+    const baseHeight = RadarCanvasRenderer.MIG29_CURSOR_BASE_HEIGHT_PX;
+
+    if (mode === 'v') {
+      return { width, height: Math.max(5, baseHeight * 0.5) };
+    }
+
+    if (mode === 'd') {
+      return { width, height: Math.max(5, baseHeight * 1.5) };
+    }
+
+    return { width, height: baseHeight };
   }
 
   private getScopeLayout(

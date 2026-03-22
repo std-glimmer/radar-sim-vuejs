@@ -15,6 +15,7 @@ const props = defineProps<{
   rangeAzimuthOnlyTargetIds: string[];
   outOfAzimuthInRangeTargetIds: string[];
   outOfRangeTargetIds: string[];
+  showTargetAltitudeLabels: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -37,6 +38,7 @@ function redraw(): void {
     props.rangeAzimuthOnlyTargetIds,
     props.outOfAzimuthInRangeTargetIds,
     props.outOfRangeTargetIds,
+    props.showTargetAltitudeLabels,
   );
 }
 
@@ -85,6 +87,7 @@ watch(
     props.rangeAzimuthOnlyTargetIds,
     props.outOfAzimuthInRangeTargetIds,
     props.outOfRangeTargetIds,
+    props.showTargetAltitudeLabels,
   ],
   redraw,
   { deep: true },

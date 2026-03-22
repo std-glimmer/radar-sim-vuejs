@@ -40,9 +40,12 @@ const mig29RadarMode = ref<Mig29RadarMode>('auto');
 const mig29DeltaH = ref(0);
 const mig29ZonePosition = ref<Mig29ZonePosition>('center');
 const hoveredTargetId = ref<string | null>(null);
+const showTargetAltitudeLabels = ref(false);
 const manualParamsSnapshot = ref<RadarParams | null>(null);
 const migBaseCursorWidth = ref(params.value.cursorWidthMeters);
 const migBaseCursorLength = ref(params.value.cursorLengthMeters);
+const MIG29_MIN_SCAN_ZONE_EDGE_DEG = -38;
+const MIG29_MAX_SCAN_ZONE_EDGE_DEG = 60;
 
 const effectiveScopeMode = computed<RadarScopeMode>(() =>
   controlMode.value === 'mig29' ? 'b-scope' : scopeMode.value,
@@ -208,6 +211,19 @@ function toggleRunState(): void {
 }
 
 function updateRadarParams(nextParams: Partial<RadarParams>): void {
+  if (controlMode.value === 'mig29') {
+    const mergedElevationFovDeg =
+      typeof nextParams.elevationFovDeg === 'number' ? nextParams.elevationFovDeg : params.value.elevationFovDeg;
+    const mergedAntennaTiltDeg =
+      typeof nextParams.antennaTiltDeg === 'number' ? nextParams.antennaTiltDeg : params.value.antennaTiltDeg;
+
+    radarStore.updateParams({
+      ...nextParams,
+      antennaTiltDeg: clampMig29AntennaTiltByZoneBounds(mergedAntennaTiltDeg, mergedElevationFovDeg),
+    });
+    return;
+  }
+
   radarStore.updateParams(nextParams);
 }
 
@@ -278,6 +294,17 @@ function updateHoveredTarget(nextTargetId: string | null): void {
   hoveredTargetId.value = nextTargetId;
 }
 
+function updateTargetAltitudeLabelsVisibility(visible: boolean): void {
+  showTargetAltitudeLabels.value = visible;
+}
+
+function centerCursorOnScanZone(): void {
+  updateCursorFromAbsolute({
+    rangeMeters: params.value.maxRangeMeters * 0.5,
+    azimuthRad: getScanCenterAzimuthRad(params.value),
+  });
+}
+
 function applyMig29Params(): void {
   if (controlMode.value !== 'mig29') {
     return;
@@ -298,9 +325,11 @@ function applyMig29Params(): void {
     elevationFovDeg = cursor.value.rangeMeters > cursorRangeThresholdMeters ? 11 : 13;
   }
 
-  const antennaTiltDeg = clampNumber((mig29DeltaH.value / cursorRangeKm) * 57.3, -60, 60);
-  const cursorWidthMeters = mode === 'v' ? migBaseCursorWidth.value : migBaseCursorWidth.value;
-  const cursorLengthMeters = mode === 'v' ? migBaseCursorLength.value * 0.5 : migBaseCursorLength.value;
+  const rawAntennaTiltDeg = (Math.atan2(mig29DeltaH.value, cursorRangeKm) * 180) / Math.PI;
+  const antennaTiltDeg = clampMig29AntennaTiltByZoneBounds(rawAntennaTiltDeg, elevationFovDeg);
+  const cursorWidthMeters = migBaseCursorWidth.value;
+  const cursorLengthMeters =
+    mode === 'v' ? migBaseCursorLength.value * 0.5 : mode === 'd' ? migBaseCursorLength.value * 1.5 : migBaseCursorLength.value;
 
   radarStore.updateParams({
     maxRangeMeters: rangeKm * 1000,
@@ -316,6 +345,47 @@ function applyMig29Params(): void {
     cursorWidthMeters,
     cursorLengthMeters,
   });
+}
+
+function clampMig29AntennaTiltByZoneBounds(antennaTiltDeg: number, elevationFovDeg: number): number {
+  const halfZoneDeg = Math.max(5, Math.min(90, elevationFovDeg)) * 0.5;
+  const maxSpanDeg = MIG29_MAX_SCAN_ZONE_EDGE_DEG - MIG29_MIN_SCAN_ZONE_EDGE_DEG;
+  if (halfZoneDeg * 2 >= maxSpanDeg - 1e-6) {
+    return (MIG29_MIN_SCAN_ZONE_EDGE_DEG + MIG29_MAX_SCAN_ZONE_EDGE_DEG) * 0.5;
+  }
+
+  let clampedTiltDeg = antennaTiltDeg;
+
+  const topEdgeDeg = clampedTiltDeg + halfZoneDeg;
+  if (topEdgeDeg > MIG29_MAX_SCAN_ZONE_EDGE_DEG) {
+    clampedTiltDeg -= topEdgeDeg - MIG29_MAX_SCAN_ZONE_EDGE_DEG;
+  }
+
+  const bottomEdgeDeg = clampedTiltDeg - halfZoneDeg;
+  if (bottomEdgeDeg < MIG29_MIN_SCAN_ZONE_EDGE_DEG) {
+    clampedTiltDeg += MIG29_MIN_SCAN_ZONE_EDGE_DEG - bottomEdgeDeg;
+  }
+
+  return clampNumber(
+    clampedTiltDeg,
+    MIG29_MIN_SCAN_ZONE_EDGE_DEG + halfZoneDeg,
+    MIG29_MAX_SCAN_ZONE_EDGE_DEG - halfZoneDeg,
+  );
+}
+
+function enforceMig29VerticalZoneLimits(): void {
+  if (controlMode.value !== 'mig29') {
+    return;
+  }
+
+  const clampedTiltDeg = clampMig29AntennaTiltByZoneBounds(
+    params.value.antennaTiltDeg,
+    params.value.elevationFovDeg,
+  );
+
+  if (Math.abs(clampedTiltDeg - params.value.antennaTiltDeg) > 1e-6) {
+    radarStore.updateParams({ antennaTiltDeg: clampedTiltDeg });
+  }
 }
 
 function handleCursorKeydown(event: KeyboardEvent): void {
@@ -435,6 +505,7 @@ onMounted(() => {
   runtime.start();
   window.addEventListener('keydown', handleCursorKeydown);
   applyMig29Params();
+  centerCursorOnScanZone();
 });
 
 watch(
@@ -452,6 +523,11 @@ watch(
 watch(
   () => [controlMode.value, mig29RadarMode.value, mig29DeltaH.value, mig29ZonePosition.value, cursor.value.rangeMeters],
   () => applyMig29Params(),
+);
+
+watch(
+  () => [controlMode.value, params.value.antennaTiltDeg, params.value.elevationFovDeg],
+  () => enforceMig29VerticalZoneLimits(),
 );
 
 onBeforeUnmount(() => {
@@ -501,13 +577,16 @@ onBeforeUnmount(() => {
               :params="params"
               :cursor="cursor"
               :control-mode="controlMode"
+              :mig29-radar-mode="mig29RadarMode"
               :hovered-target-id="hoveredTargetId"
               :in-fov-target-ids="inFovTargetIds"
               :range-azimuth-only-target-ids="rangeAzimuthOnlyTargetIds"
               :out-of-azimuth-in-range-target-ids="outOfAzimuthInRangeTargetIds"
               :out-of-range-target-ids="outOfRangeTargetIds"
+              :show-target-altitude-labels="showTargetAltitudeLabels"
               @add-from-scene="addTargetFromScene"
               @hover-target="updateHoveredTarget"
+              @update-target-altitude-labels-visibility="updateTargetAltitudeLabelsVisibility"
             />
           </div>
         </template>
@@ -542,6 +621,7 @@ onBeforeUnmount(() => {
             :range-azimuth-only-target-ids="rangeAzimuthOnlyTargetIds"
             :out-of-azimuth-in-range-target-ids="outOfAzimuthInRangeTargetIds"
             :out-of-range-target-ids="outOfRangeTargetIds"
+            :show-target-altitude-labels="showTargetAltitudeLabels"
             @hover-target="updateHoveredTarget"
           />
         </template>

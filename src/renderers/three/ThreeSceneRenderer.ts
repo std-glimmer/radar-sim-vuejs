@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Detection, RadarCursorState, RadarParams, Target } from '../../core/types';
+import type { Detection, Mig29RadarMode, RadarControlMode, RadarCursorState, RadarParams, Target } from '../../core/types';
 
 interface ThreeSceneRendererOptions {
   onAddTargetFromGroundPoint?: (x: number, z: number) => void;
@@ -21,15 +21,21 @@ export class ThreeSceneRenderer {
   private readonly scene = new THREE.Scene();
   private readonly targetSphereGeometry = new THREE.SphereGeometry(1500, 12, 8);
   private readonly targetCubeGeometry = new THREE.BoxGeometry(2400, 2400, 2400);
+  private readonly targetPyramidGeometry = new THREE.ConeGeometry(1700, 2800, 4);
   private readonly camera: THREE.PerspectiveCamera;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly controls: OrbitControls;
   private readonly raycaster = new THREE.Raycaster();
   private readonly mouse = new THREE.Vector2();
   private readonly targetMeshes = new Map<string, THREE.Mesh>();
+  private readonly targetAltitudeSprites = new Map<string, THREE.Sprite>();
   private readonly detectionPulseUntilMs = new Map<string, number>();
+  private showTargetAltitudeLabels = true;
   private hoveredTargetId: string | null = null;
-  private inZoneTargetIds = new Set<string>();
+  private inFovTargetIds = new Set<string>();
+  private rangeAzimuthOnlyTargetIds = new Set<string>();
+  private outOfAzimuthInRangeTargetIds = new Set<string>();
+  private outOfRangeTargetIds = new Set<string>();
   private pointerHoverTargetId: string | null = null;
   private radarAltitudeMeters = 0;
   private scanRegionMesh: THREE.Mesh | null = null;
@@ -39,6 +45,9 @@ export class ThreeSceneRenderer {
   private readonly activeBoundaryMeshes: THREE.Mesh[] = [];
   private readonly activeBoundaryLines: THREE.LineSegments[] = [];
   private cursorMesh: THREE.LineLoop | null = null;
+  private cursorBoundaryLine: THREE.Line | null = null;
+  private cursorBoundaryTopMarker: THREE.Mesh | null = null;
+  private cursorBoundaryBottomMarker: THREE.Mesh | null = null;
   private originMesh: THREE.Mesh | null = null;
   private radarAircraftGroup: THREE.Group | null = null;
   private orientationGroup: THREE.Group | null = null;
@@ -104,6 +113,7 @@ export class ThreeSceneRenderer {
       if (!nextIds.has(id)) {
         this.scene.remove(mesh);
         this.targetMeshes.delete(id);
+        this.disposeTargetAltitudeSprite(id);
         this.detectionPulseUntilMs.delete(id);
       }
     }
@@ -122,6 +132,7 @@ export class ThreeSceneRenderer {
       }
 
       mesh.position.set(-target.position.x, target.position.y, target.position.z);
+      this.updateTargetAltitudeSprite(target.id, target.position.y, mesh.position);
     }
   }
 
@@ -138,9 +149,25 @@ export class ThreeSceneRenderer {
     }
   }
 
-  setTargetHighlights(hoveredTargetId: string | null, inZoneTargetIds: string[]): void {
+  setTargetHighlights(
+    hoveredTargetId: string | null,
+    inFovTargetIds: string[],
+    rangeAzimuthOnlyTargetIds: string[],
+    outOfAzimuthInRangeTargetIds: string[],
+    outOfRangeTargetIds: string[],
+  ): void {
     this.hoveredTargetId = hoveredTargetId;
-    this.inZoneTargetIds = new Set(inZoneTargetIds);
+    this.inFovTargetIds = new Set(inFovTargetIds);
+    this.rangeAzimuthOnlyTargetIds = new Set(rangeAzimuthOnlyTargetIds);
+    this.outOfAzimuthInRangeTargetIds = new Set(outOfAzimuthInRangeTargetIds);
+    this.outOfRangeTargetIds = new Set(outOfRangeTargetIds);
+  }
+
+  setTargetAltitudeLabelsVisible(visible: boolean): void {
+    this.showTargetAltitudeLabels = visible;
+    for (const sprite of this.targetAltitudeSprites.values()) {
+      sprite.visible = visible;
+    }
   }
 
   setDisplaySettings(nextSettings: Partial<ThreeDisplaySettings>): void {
@@ -282,10 +309,24 @@ export class ThreeSceneRenderer {
     }
   }
 
-  updateCursor(cursor: RadarCursorState | null, params: RadarParams): void {
+  updateCursor(
+    cursor: RadarCursorState | null,
+    params: RadarParams,
+    controlMode?: RadarControlMode,
+    mig29RadarMode?: Mig29RadarMode,
+  ): void {
     if (!cursor) {
       if (this.cursorMesh) {
         this.cursorMesh.visible = false;
+      }
+      if (this.cursorBoundaryLine) {
+        this.cursorBoundaryLine.visible = false;
+      }
+      if (this.cursorBoundaryTopMarker) {
+        this.cursorBoundaryTopMarker.visible = false;
+      }
+      if (this.cursorBoundaryBottomMarker) {
+        this.cursorBoundaryBottomMarker.visible = false;
       }
       return;
     }
@@ -321,6 +362,32 @@ export class ThreeSceneRenderer {
       this.scene.add(this.cursorMesh);
     }
 
+    if (!this.cursorBoundaryLine) {
+      const lineGeometry = new THREE.BufferGeometry();
+      lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
+      this.cursorBoundaryLine = new THREE.Line(
+        lineGeometry,
+        new THREE.LineBasicMaterial({ color: '#9fd9ff', transparent: true, opacity: 0.9 }),
+      );
+      this.scene.add(this.cursorBoundaryLine);
+    }
+
+    if (!this.cursorBoundaryTopMarker) {
+      this.cursorBoundaryTopMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(320, 10, 8),
+        new THREE.MeshBasicMaterial({ color: '#8fd4ff' }),
+      );
+      this.scene.add(this.cursorBoundaryTopMarker);
+    }
+
+    if (!this.cursorBoundaryBottomMarker) {
+      this.cursorBoundaryBottomMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(320, 10, 8),
+        new THREE.MeshBasicMaterial({ color: '#ffd37a' }),
+      );
+      this.scene.add(this.cursorBoundaryBottomMarker);
+    }
+
     const clampedRange = Math.max(0, Math.min(params.maxRangeMeters, cursor.rangeMeters));
     const centerElevationRad = (params.antennaTiltDeg * Math.PI) / 180;
     const planarRange = Math.cos(centerElevationRad) * clampedRange;
@@ -333,11 +400,61 @@ export class ThreeSceneRenderer {
     this.cursorMesh.position.y = y;
     this.cursorMesh.position.z = z;
     this.cursorMesh.rotation.set(-Math.PI / 2, 0, 0);
-    this.cursorMesh.scale.set(
-      Math.max(1, params.cursorWidthMeters),
-      Math.max(1, params.cursorLengthMeters),
-      1,
+    const cursorWidthMeters = Math.max(1, params.cursorWidthMeters);
+    let cursorLengthMeters = Math.max(1, params.cursorLengthMeters);
+
+    if (controlMode === 'mig29') {
+      if (mig29RadarMode === 'v') {
+        cursorLengthMeters = Math.max(1, cursorLengthMeters / 0.5);
+      } else if (mig29RadarMode === 'd') {
+        cursorLengthMeters = Math.max(1, cursorLengthMeters / 1.5);
+      }
+    }
+
+    this.cursorMesh.scale.set(cursorWidthMeters, cursorLengthMeters, 1);
+
+    const halfElevationSpanRad = (Math.max(5, Math.min(90, params.elevationFovDeg)) * Math.PI) / 360;
+    const antennaTiltRad = (Math.max(-60, Math.min(60, params.antennaTiltDeg)) * Math.PI) / 180;
+    const upperElevationRad = antennaTiltRad + halfElevationSpanRad;
+    const lowerElevationRad = antennaTiltRad - halfElevationSpanRad;
+
+    const topPoint = new THREE.Vector3(
+      -Math.sin(cursor.azimuthRad) * Math.cos(upperElevationRad) * clampedRange,
+      this.radarAltitudeMeters + Math.sin(upperElevationRad) * clampedRange,
+      Math.cos(cursor.azimuthRad) * Math.cos(upperElevationRad) * clampedRange,
     );
+    const bottomPoint = new THREE.Vector3(
+      -Math.sin(cursor.azimuthRad) * Math.cos(lowerElevationRad) * clampedRange,
+      this.radarAltitudeMeters + Math.sin(lowerElevationRad) * clampedRange,
+      Math.cos(cursor.azimuthRad) * Math.cos(lowerElevationRad) * clampedRange,
+    );
+
+    const rightOffsetDistance = Math.max(2200, params.cursorWidthMeters * 0.6);
+    const rightOffset = new THREE.Vector3(
+      Math.cos(cursor.azimuthRad) * rightOffsetDistance,
+      0,
+      Math.sin(cursor.azimuthRad) * rightOffsetDistance,
+    );
+    topPoint.add(rightOffset);
+    bottomPoint.add(rightOffset);
+
+    if (this.cursorBoundaryLine) {
+      const attr = this.cursorBoundaryLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+      attr.setXYZ(0, topPoint.x, topPoint.y, topPoint.z);
+      attr.setXYZ(1, bottomPoint.x, bottomPoint.y, bottomPoint.z);
+      attr.needsUpdate = true;
+      this.cursorBoundaryLine.visible = true;
+    }
+
+    if (this.cursorBoundaryTopMarker) {
+      this.cursorBoundaryTopMarker.position.copy(topPoint);
+      this.cursorBoundaryTopMarker.visible = true;
+    }
+
+    if (this.cursorBoundaryBottomMarker) {
+      this.cursorBoundaryBottomMarker.position.copy(bottomPoint);
+      this.cursorBoundaryBottomMarker.visible = true;
+    }
   }
 
   resize(): void {
@@ -357,11 +474,14 @@ export class ThreeSceneRenderer {
 
     this.disposeScanMeshes();
     this.disposeCursorMesh();
+    this.disposeCursorBoundaryGuides();
+    this.disposeAllTargetAltitudeSprites();
     this.disposeRadarAircraftMarker();
     this.disposeOrientationGuides();
 
     this.targetSphereGeometry.dispose();
     this.targetCubeGeometry.dispose();
+    this.targetPyramidGeometry.dispose();
 
     this.renderer.dispose();
     this.host.removeChild(this.renderer.domElement);
@@ -570,6 +690,87 @@ export class ThreeSceneRenderer {
     return sprite;
   }
 
+  private createTargetAltitudeSprite(label: string): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 224;
+    canvas.height = 72;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('2D context is not available for target altitude sprite');
+    }
+
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.font = '700 30px sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillStyle = 'rgba(6, 12, 18, 0.62)';
+    context.fillRect(6, 8, canvas.width - 12, canvas.height - 16);
+    context.fillStyle = '#d5eeff';
+    context.fillText(label, canvas.width / 2, canvas.height / 2 + 1);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(9800, 3200, 1);
+    sprite.renderOrder = 1001;
+    return sprite;
+  }
+
+  private formatAltitudeKm(altitudeMeters: number): string {
+    return `${(altitudeMeters / 1000).toFixed(1)} km`;
+  }
+
+  private updateTargetAltitudeSprite(targetId: string, altitudeMeters: number, position: THREE.Vector3): void {
+    const altitudeLabel = this.formatAltitudeKm(altitudeMeters);
+    let sprite = this.targetAltitudeSprites.get(targetId);
+
+    if (!sprite || sprite.userData.altitudeLabel !== altitudeLabel) {
+      if (sprite) {
+        this.disposeSpriteResources(sprite);
+        this.scene.remove(sprite);
+      }
+
+      sprite = this.createTargetAltitudeSprite(altitudeLabel);
+      sprite.userData.altitudeLabel = altitudeLabel;
+      sprite.visible = this.showTargetAltitudeLabels;
+      this.targetAltitudeSprites.set(targetId, sprite);
+      this.scene.add(sprite);
+    }
+
+    sprite.position.set(position.x + 3200, position.y + 2400, position.z);
+  }
+
+  private disposeSpriteResources(sprite: THREE.Sprite): void {
+    const material = sprite.material as THREE.SpriteMaterial;
+    material.map?.dispose();
+    material.dispose();
+  }
+
+  private disposeTargetAltitudeSprite(targetId: string): void {
+    const sprite = this.targetAltitudeSprites.get(targetId);
+    if (!sprite) {
+      return;
+    }
+
+    this.scene.remove(sprite);
+    this.disposeSpriteResources(sprite);
+    this.targetAltitudeSprites.delete(targetId);
+  }
+
+  private disposeAllTargetAltitudeSprites(): void {
+    for (const [targetId] of this.targetAltitudeSprites) {
+      this.disposeTargetAltitudeSprite(targetId);
+    }
+  }
+
   private rebuildScanRegionGeometry(
     maxRangeMeters: number,
     azimuthSpanDeg: number,
@@ -694,6 +895,29 @@ export class ThreeSceneRenderer {
     this.cursorMesh.geometry.dispose();
     (this.cursorMesh.material as THREE.Material).dispose();
     this.cursorMesh = null;
+  }
+
+  private disposeCursorBoundaryGuides(): void {
+    if (this.cursorBoundaryLine) {
+      this.scene.remove(this.cursorBoundaryLine);
+      this.cursorBoundaryLine.geometry.dispose();
+      (this.cursorBoundaryLine.material as THREE.Material).dispose();
+      this.cursorBoundaryLine = null;
+    }
+
+    if (this.cursorBoundaryTopMarker) {
+      this.scene.remove(this.cursorBoundaryTopMarker);
+      this.cursorBoundaryTopMarker.geometry.dispose();
+      (this.cursorBoundaryTopMarker.material as THREE.Material).dispose();
+      this.cursorBoundaryTopMarker = null;
+    }
+
+    if (this.cursorBoundaryBottomMarker) {
+      this.scene.remove(this.cursorBoundaryBottomMarker);
+      this.cursorBoundaryBottomMarker.geometry.dispose();
+      (this.cursorBoundaryBottomMarker.material as THREE.Material).dispose();
+      this.cursorBoundaryBottomMarker = null;
+    }
   }
 
   private buildActiveBoundaryFaces(
@@ -934,26 +1158,49 @@ export class ThreeSceneRenderer {
       const material = mesh.material as THREE.MeshStandardMaterial;
       const isPulse = (this.detectionPulseUntilMs.get(id) ?? 0) > now;
       const isHovered = this.hoveredTargetId === id;
-      const isInZone = this.inZoneTargetIds.has(id);
+      const isInFov = this.inFovTargetIds.has(id);
+      const isRangeAzimuthOnly = this.rangeAzimuthOnlyTargetIds.has(id);
+      const isOutAzimuthInRange = this.outOfAzimuthInRangeTargetIds.has(id);
+      const isOutOfRange = this.outOfRangeTargetIds.has(id);
 
-      const desiredShape = isInZone ? 'cube' : 'sphere';
+      const desiredShape = isInFov ? 'pyramid' : isRangeAzimuthOnly ? 'cube' : 'sphere';
       if (mesh.userData.shape !== desiredShape) {
-        mesh.geometry = isInZone ? this.targetCubeGeometry : this.targetSphereGeometry;
+        if (desiredShape === 'pyramid') {
+          mesh.geometry = this.targetPyramidGeometry;
+          mesh.rotation.set(0, 0, 0);
+        } else if (desiredShape === 'cube') {
+          mesh.geometry = this.targetCubeGeometry;
+          mesh.rotation.set(0, 0, 0);
+        } else {
+          mesh.geometry = this.targetSphereGeometry;
+          mesh.rotation.set(0, 0, 0);
+        }
         mesh.userData.shape = desiredShape;
       }
 
-      if (isPulse) {
-        material.color.set('#ffffff');
-        material.emissive.set('#6f6f6f');
-      } else if (isInZone) {
+      if (isInFov || isPulse) {
+        material.color.set('#ff6464');
+        material.emissive.set('#4d1515');
+      } else if (isRangeAzimuthOnly) {
+        material.color.set('#f1d061');
+        material.emissive.set('#4a3c12');
+      } else if (isOutAzimuthInRange) {
+        material.color.set('#67d88f');
+        material.emissive.set('#123421');
+      } else if (isOutOfRange) {
+        material.color.set('#aeb7c2');
+        material.emissive.set('#323840');
+      } else {
         material.color.set('#ff8a8a');
         material.emissive.set('#441010');
-      } else {
-        material.color.set('#f4d760');
-        material.emissive.set('#332b0a');
       }
 
       mesh.scale.setScalar(isHovered ? 1.2 : 1);
+
+      const sprite = this.targetAltitudeSprites.get(id);
+      if (sprite) {
+        sprite.scale.set(isHovered ? 11200 : 9800, isHovered ? 3600 : 3200, 1);
+      }
     }
   }
 

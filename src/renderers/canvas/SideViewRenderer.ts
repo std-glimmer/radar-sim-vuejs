@@ -40,6 +40,7 @@ export class SideViewRenderer {
     rangeAzimuthOnlyTargetIds: string[],
     outOfAzimuthInRangeTargetIds: string[],
     outOfRangeTargetIds: string[],
+    showTargetAltitudeLabels: boolean,
   ): void {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
@@ -50,7 +51,15 @@ export class SideViewRenderer {
 
     this.ctx.clearRect(0, 0, width, height);
     this.drawBackground(width, height);
-    this.drawAxes(pad, width, height, params.maxRangeMeters, scale, cursor, params.antennaTiltDeg);
+    this.drawAxes(
+      pad,
+      width,
+      height,
+      params.maxRangeMeters,
+      scale,
+      cursor,
+      params.antennaTiltDeg,
+    );
 
     this.ctx.save();
     this.ctx.translate(pad, pad);
@@ -139,6 +148,15 @@ export class SideViewRenderer {
           this.ctx.arc(x, y, radius + 2, 0, Math.PI * 2);
           this.ctx.stroke();
         }
+      }
+
+      if (showTargetAltitudeLabels) {
+        const altitudeText = `${(target.position.y / 1000).toFixed(1)} km`;
+        this.ctx.fillStyle = isHovered ? 'rgba(255, 241, 205, 0.98)' : 'rgba(206, 231, 249, 0.9)';
+        this.ctx.font = '10px sans-serif';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(altitudeText, x + radius + 5, y - radius - 2);
       }
     }
 
@@ -396,6 +414,10 @@ export class SideViewRenderer {
     const tiltText = `${antennaTiltDeg.toFixed(1)} deg`;
     this.ctx.fillStyle = 'rgba(64, 255, 122, 0.92)';
     this.ctx.font = '11px sans-serif';
-    this.ctx.fillText(`cursor ${cursorRangeText} / tilt ${tiltText}`, pad + 8, height - pad - 10);
+    this.ctx.fillText(
+      `cursor ${cursorRangeText} / tilt ${tiltText}`,
+      pad + 8,
+      height - pad - 10,
+    );
   }
 }

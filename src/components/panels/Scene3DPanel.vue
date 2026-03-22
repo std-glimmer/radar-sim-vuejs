@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import type { Detection, RadarControlMode, RadarCursorState, RadarParams, Target } from '../../core/types';
+import type { Detection, Mig29RadarMode, RadarControlMode, RadarCursorState, RadarParams, Target } from '../../core/types';
 import { ThreeSceneRenderer } from '../../renderers/three/ThreeSceneRenderer';
 
 const props = defineProps<{
@@ -11,16 +11,19 @@ const props = defineProps<{
   params: RadarParams;
   cursor: RadarCursorState | null;
   controlMode: RadarControlMode;
+  mig29RadarMode: Mig29RadarMode;
   hoveredTargetId: string | null;
   inFovTargetIds: string[];
   rangeAzimuthOnlyTargetIds: string[];
   outOfAzimuthInRangeTargetIds: string[];
   outOfRangeTargetIds: string[];
+  showTargetAltitudeLabels: boolean;
 }>();
 
 const emit = defineEmits<{
   addFromScene: [payload: { x: number; z: number }];
   hoverTarget: [targetId: string | null];
+  updateTargetAltitudeLabelsVisibility: [visible: boolean];
 }>();
 
 const hostRef = ref<HTMLDivElement | null>(null);
@@ -34,6 +37,7 @@ const displaySettings = reactive({
   showActiveSectorVerticalFaces: true,
   showOrientationGuides: false,
 });
+const showTargetAltitudeLabelsLocal = ref(props.showTargetAltitudeLabels);
 
 function onResize(): void {
   renderer?.resize();
@@ -80,7 +84,8 @@ onMounted(() => {
   );
   renderer.setDisplaySettings(displaySettings);
   renderer.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
-  renderer.updateCursor(props.cursor, props.params);
+  renderer.updateCursor(props.cursor, props.params, props.controlMode, props.mig29RadarMode);
+  renderer.setTargetAltitudeLabelsVisible(props.showTargetAltitudeLabels);
   syncRadarAircraftMarker();
   autoCenterForMig29();
 
@@ -129,16 +134,28 @@ watch(
   () => [props.sweepAngleRad, props.sweepElevationRad, props.params],
   () => {
     renderer?.updateScanCone(props.sweepAngleRad, props.sweepElevationRad, props.params);
-    renderer?.updateCursor(props.cursor, props.params);
+    renderer?.updateCursor(props.cursor, props.params, props.controlMode, props.mig29RadarMode);
   },
   { deep: true },
 );
 
 watch(
-  () => [props.cursor, props.params],
-  () => renderer?.updateCursor(props.cursor, props.params),
+  () => [props.cursor, props.params, props.controlMode, props.mig29RadarMode],
+  () => renderer?.updateCursor(props.cursor, props.params, props.controlMode, props.mig29RadarMode),
   { deep: true },
 );
+
+watch(
+  () => props.showTargetAltitudeLabels,
+  (visible) => {
+    showTargetAltitudeLabelsLocal.value = visible;
+    renderer?.setTargetAltitudeLabelsVisible(visible);
+  },
+);
+
+watch(showTargetAltitudeLabelsLocal, (visible) => {
+  emit('updateTargetAltitudeLabelsVisibility', visible);
+});
 
 watch(
   () => props.controlMode,
@@ -219,6 +236,11 @@ onBeforeUnmount(() => {
         <label>
           <input v-model="displaySettings.showOrientationGuides" type="checkbox" />
           Show north/up/down marks
+        </label>
+
+        <label>
+          <input v-model="showTargetAltitudeLabelsLocal" type="checkbox" />
+          Show target altitude labels (3D/2D)
         </label>
 
         <button type="button" class="center-button" @click="centerCamera">Center Camera</button>

@@ -28,6 +28,12 @@ const emit = defineEmits<{
 }>();
 
 const mig29DeltaHOptions = [-6, -4, -2, -1, 0, 1, 2, 4, 6, 8, 10];
+const mig29RadarModeOptions: Array<{ value: Mig29RadarMode; label: string }> = [
+  { value: 'auto', label: 'Авт.' },
+  { value: 'v', label: 'В' },
+  { value: 'd', label: 'Д' },
+];
+const mig29ZonePositions: Mig29ZonePosition[] = ['left', 'center', 'right'];
 
 type RadarProfileId = 'mig29-9-12' | 'circular-surveillance';
 
@@ -108,6 +114,66 @@ const effectiveBeamElevationDeg = computed(() => {
 
   return Math.max(1, Math.min(45, props.params.beamElevationDeg));
 });
+
+const mig29ZoneIndex = computed(() => Math.max(0, mig29ZonePositions.indexOf(props.mig29ZonePosition)));
+
+const headingDialDeg = computed(() => {
+  const heading = normalizeHeadingDeg(props.params.radarAzimuthDeg);
+  return heading;
+});
+
+function normalizeHeadingDeg(rawDeg: number): number {
+  let heading = rawDeg % 360;
+  if (heading < 0) {
+    heading += 360;
+  }
+  return heading;
+}
+
+function getRotaryOptionStyle(index: number, total: number): { transform: string } {
+  const startDeg = -120;
+  const spanDeg = 240;
+  const stepDeg = total > 1 ? spanDeg / (total - 1) : 0;
+  const angle = startDeg + stepDeg * index;
+  const radius = 42;
+  return {
+    transform: `translate(-50%, -50%) rotate(${angle}deg) translate(${radius}px) rotate(${-angle}deg)`,
+  };
+}
+
+function getDeltaHOptionStyle(value: number): { transform: string } {
+  const positiveOrder = [0, 1, 2, 4, 6, 8, 10];
+  const negativeOrder = [0, -1, -2, -4, -6];
+  let angle = 180;
+
+  if (value >= 0) {
+    const index = Math.max(0, positiveOrder.indexOf(value));
+    const step = 180 / Math.max(1, positiveOrder.length - 1);
+    angle = 180 + index * step;
+  } else {
+    const index = Math.max(0, negativeOrder.indexOf(value));
+    const step = 120 / Math.max(1, negativeOrder.length - 1);
+    angle = 180 - index * step;
+  }
+
+  const radius = 42;
+  return {
+    transform: `translate(-50%, -50%) rotate(${angle}deg) translate(${radius}px) rotate(${-angle}deg)`,
+  };
+}
+
+function updateZoneByIndex(index: number): void {
+  const clampedIndex = Math.max(0, Math.min(2, index));
+  emit('updateMig29ZonePosition', mig29ZonePositions[clampedIndex]);
+}
+
+function updateAltitudeDial(raw: string): void {
+  emitNumericUpdate('radarAltitudeMeters', raw);
+}
+
+function updateHeadingDial(raw: string): void {
+  emitNumericUpdate('radarAzimuthDeg', raw);
+}
 </script>
 
 <template>
@@ -132,65 +198,114 @@ const effectiveBeamElevationDeg = computed(() => {
 
     <template v-if="props.controlMode === 'mig29'">
       <div class="param-group">
-        <h3>MiG-29 Controls</h3>
+        <h3>MiG-29 Radar Controls</h3>
 
-        <div class="param-item">
-          <label for="mig29-radar-mode">Radar mode</label>
-          <div class="control-row profile-row">
-            <select
-              id="mig29-radar-mode"
-              :value="props.mig29RadarMode"
-              @change="emit('updateMig29RadarMode', ($event.target as HTMLSelectElement).value as Mig29RadarMode)"
-            >
-              <option value="auto">Avt.</option>
-              <option value="v">V</option>
-              <option value="d">D</option>
-            </select>
+        <div class="mig29-top-grid">
+          <div class="param-item">
+            <label>Radar mode</label>
+            <div class="rotary-shell">
+              <div class="rotary-dial">
+                <button
+                  v-for="(mode, index) in mig29RadarModeOptions"
+                  :key="mode.value"
+                  type="button"
+                  class="rotary-option"
+                  :class="{ active: props.mig29RadarMode === mode.value }"
+                  :style="getRotaryOptionStyle(index, mig29RadarModeOptions.length)"
+                  @click="emit('updateMig29RadarMode', mode.value)"
+                >
+                  {{ mode.label }}
+                </button>
+                <span class="rotary-cap" aria-hidden="true"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="param-item">
+            <label>Delta H</label>
+            <div class="rotary-shell">
+              <div class="rotary-dial delta-dial">
+                <button
+                  v-for="value in mig29DeltaHOptions"
+                  :key="value"
+                  type="button"
+                  class="rotary-option delta-option"
+                  :class="{ active: props.mig29DeltaH === value }"
+                  :style="getDeltaHOptionStyle(value)"
+                  @click="emit('updateMig29DeltaH', value)"
+                >
+                  {{ value }}
+                </button>
+                <span class="rotary-cap" aria-hidden="true"></span>
+              </div>
+              <div class="rotary-readout">Selected: {{ props.mig29DeltaH }}</div>
+            </div>
+          </div>
+
+          <div class="param-item">
+            <label>Zone</label>
+            <div class="zone-toggle" role="group" aria-label="Zone selector">
+              <span
+                class="zone-thumb"
+                :style="{ transform: `translateX(${mig29ZoneIndex * 100}%)` }"
+                aria-hidden="true"
+              ></span>
+              <button
+                v-for="(zone, index) in mig29ZonePositions"
+                :key="zone"
+                type="button"
+                class="zone-button"
+                :class="{ active: props.mig29ZonePosition === zone }"
+                @click="updateZoneByIndex(index)"
+              >
+                {{ zone === 'left' ? 'L' : zone === 'center' ? 'C' : 'R' }}
+              </button>
+            </div>
           </div>
         </div>
+      </div>
 
-        <div class="param-item">
-          <label for="mig29-delta-h">Delta H</label>
-          <div class="control-row profile-row">
-            <select
-              id="mig29-delta-h"
-              :value="props.mig29DeltaH"
-              @change="emit('updateMig29DeltaH', Number(($event.target as HTMLSelectElement).value))"
-            >
-              <option v-for="value in mig29DeltaHOptions" :key="value" :value="value">
-                {{ value }}
-              </option>
-            </select>
+      <div class="param-group">
+        <h3>Aircraft Position Setters</h3>
+
+        <div class="mig29-bottom-grid">
+          <div class="param-item">
+            <label>Flight heading setter</label>
+            <div class="instrument-shell">
+              <div class="instrument-dial compass-dial">
+                <div class="instrument-pointer compass-pointer" :style="{ transform: `translate(-50%, -100%) rotate(${headingDialDeg}deg)` }"></div>
+                <div class="instrument-center"></div>
+                <div class="instrument-mark n">N</div>
+                <div class="instrument-mark e">E</div>
+                <div class="instrument-mark s">S</div>
+                <div class="instrument-mark w">W</div>
+              </div>
+              <div class="instrument-readout">{{ normalizeHeadingDeg(props.params.radarAzimuthDeg).toFixed(1) }} deg</div>
+              <input
+                type="range"
+                min="-180"
+                max="180"
+                step="1"
+                :value="props.params.radarAzimuthDeg"
+                @input="updateHeadingDial(($event.target as HTMLInputElement).value)"
+              />
+            </div>
           </div>
-        </div>
 
-        <div class="param-item">
-          <label>Zone</label>
-          <div class="toggle-row">
-            <button
-              type="button"
-              class="zone-button"
-              :class="{ active: props.mig29ZonePosition === 'left' }"
-              @click="emit('updateMig29ZonePosition', 'left')"
-            >
-              &lt;- 
-            </button>
-            <button
-              type="button"
-              class="zone-button"
-              :class="{ active: props.mig29ZonePosition === 'center' }"
-              @click="emit('updateMig29ZonePosition', 'center')"
-            >
-              Center
-            </button>
-            <button
-              type="button"
-              class="zone-button"
-              :class="{ active: props.mig29ZonePosition === 'right' }"
-              @click="emit('updateMig29ZonePosition', 'right')"
-            >
-              -&gt;
-            </button>
+          <div class="param-item altitude-slider-item">
+            <label>Flight altitude setter</label>
+            <div class="vertical-altitude-shell">
+              <div class="altitude-slider-readout">{{ Math.round(props.params.radarAltitudeMeters) }} m</div>
+              <input
+                class="vertical-altitude-slider"
+                type="range"
+                min="0"
+                max="20000"
+                step="100"
+                :value="Math.max(0, Math.min(20000, props.params.radarAltitudeMeters))"
+                @input="updateAltitudeDial(($event.target as HTMLInputElement).value)"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -673,20 +788,230 @@ select {
   gap: 6px;
 }
 
-.zone-button {
-  flex: 1;
-  border: 1px solid rgba(145, 183, 212, 0.4);
-  background: rgba(6, 14, 23, 0.86);
+.mig29-top-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mig29-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.rotary-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.rotary-dial {
+  position: relative;
+  width: 124px;
+  height: 124px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #2c3f52 0%, #172532 48%, #0c1520 100%);
+  border: 1px solid rgba(154, 186, 212, 0.42);
+  box-shadow: inset 0 0 12px rgba(5, 14, 22, 0.85);
+}
+
+.rotary-option {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  min-width: 34px;
+  border: 1px solid rgba(145, 183, 212, 0.55);
+  background: rgba(10, 24, 37, 0.92);
   color: #d8ebff;
-  border-radius: 6px;
-  padding: 5px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  padding: 2px 6px;
   cursor: pointer;
 }
 
+.rotary-option.active {
+  border-color: rgba(143, 245, 180, 0.85);
+  color: #ddffe9;
+  background: rgba(19, 53, 37, 0.95);
+}
+
+.delta-option {
+  min-width: 30px;
+  font-size: 9px;
+  padding: 2px 5px;
+}
+
+.rotary-cap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 40% 30%, #cad9e8 0%, #6f8194 55%, #344150 100%);
+  border: 1px solid rgba(196, 218, 238, 0.4);
+}
+
+.rotary-readout {
+  font-size: 11px;
+  color: #d1e7fa;
+}
+
+.zone-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  border: 1px solid rgba(145, 183, 212, 0.4);
+  border-radius: 999px;
+  background: rgba(7, 17, 27, 0.9);
+  overflow: hidden;
+}
+
+.zone-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 3);
+  height: calc(100% - 4px);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(118, 234, 172, 0.82), rgba(31, 113, 70, 0.92));
+  transition: transform 180ms ease;
+}
+
+.zone-button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #d8ebff;
+  border-radius: 0;
+  padding: 5px 6px;
+  cursor: pointer;
+  z-index: 1;
+}
+
 .zone-button.active {
-  border-color: rgba(125, 238, 173, 0.75);
-  background: rgba(16, 45, 29, 0.9);
-  color: #cfffdf;
+  color: #072015;
+  font-weight: 700;
+}
+
+.instrument-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.instrument-dial {
+  position: relative;
+  width: 124px;
+  height: 124px;
+  border-radius: 50%;
+  border: 1px solid rgba(145, 183, 212, 0.44);
+  background: radial-gradient(circle at 50% 46%, #12212f 0%, #0a131d 62%, #070d15 100%);
+}
+
+.compass-dial {
+  border-color: rgba(153, 190, 216, 0.5);
+}
+
+.instrument-pointer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 44px;
+  transform-origin: 50% 100%;
+  background: linear-gradient(180deg, #9ff8c6 0%, #2a9a66 100%);
+  border-radius: 2px;
+}
+
+.compass-pointer {
+  background: linear-gradient(180deg, #8dd8ff 0%, #2d6fc3 100%);
+}
+
+.instrument-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: #d8e7f7;
+}
+
+.instrument-mark {
+  position: absolute;
+  color: #d5e9ff;
+  font-size: 10px;
+}
+
+.instrument-mark.n {
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+}
+
+.instrument-mark.e {
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.instrument-mark.s {
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+}
+
+.instrument-mark.w {
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.instrument-readout {
+  font-size: 11px;
+  color: #d1e7fa;
+}
+
+.altitude-slider-item {
+  justify-self: end;
+}
+
+.vertical-altitude-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.altitude-slider-readout {
+  font-size: 11px;
+  color: #d1e7fa;
+  min-width: 76px;
+  text-align: center;
+}
+
+.vertical-altitude-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  height: 132px;
+  accent-color: #7adfb0;
+  cursor: ns-resize;
+}
+
+@media (max-width: 980px) {
+  .mig29-top-grid,
+  .mig29-bottom-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1280px) {
